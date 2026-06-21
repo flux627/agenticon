@@ -18,13 +18,18 @@ const EDGES = { N: [0, 1], S: [2, 3], W: [0, 2], E: [1, 3] };   // subpixels 0UL
 const OPP = { N: "S", S: "N", E: "W", W: "E" };
 const TRI_LEGS = { UL: ["N", "W"], UR: ["N", "E"], LL: ["S", "W"], LR: ["S", "E"] };
 const KIND_W = { Q: 0.50, T: 0.32 };                            // kind preference among legal tiles
-const ALL_MASKS = [
-  [false,false,false,false],[false,false,false,true],[false,false,true,false],[false,false,true,true],
-  [false,true,false,false],[false,true,false,true],[false,true,true,false],[false,true,true,true],
-  [true,false,false,false],[true,false,false,true],[true,false,true,false],[true,false,true,true],
-  [true,true,false,false],[true,true,false,true],[true,true,true,false],[true,true,true,true],
+// Canonical tiles: each visual shape exactly once. A mask and its complement render the
+// same cell with fg/bg swapped, so we keep one of each pair -- 3/4 folds into 1/4, the
+// bottom/right halves into top/left, the anti-diagonal into the diagonal, and the LR/LL
+// triangles into UL/UR. Solids are not here; they come from SOLIDS (the floor).
+const CANON_Q = [
+  [true, false, false, false], [false, true, false, false], [false, false, true, false], [false, false, false, true],  // single corner
+  [true, true, false, false], [true, false, true, false],   // halves (top, left)
+  [true, false, false, true],                                // diagonal
 ];
-const TRIS = ["UL", "UR", "LL", "LR"];
+const CANON_T = ["UL", "UR"];
+const isDiag = (d) => (d[0] && d[3] && !d[1] && !d[2]) || (d[1] && d[2] && !d[0] && !d[3]);
+const FORCE_DIAG_TURN = 2;   // on this 0-based placement turn (the 3rd), take a diagonal if one is legal
 const SOLIDS = PALETTE.map((x) => ({ kind: "Q", data: [false, false, false, false], fg: x, bg: x }));
 const INCELL = { 0: [1, 2], 1: [0, 3], 2: [0, 3], 3: [1, 2] };  // in-cell orthogonal subpixels
 const SUBPX_EDGES = { 0: [["N", 0], ["W", 0]], 1: [["N", 1], ["E", 0]], 2: [["S", 0], ["W", 1]], 3: [["S", 1], ["E", 1]] };
@@ -47,8 +52,8 @@ function twoColor(cols) {                                       // every two-col
   const out = [];
   for (const bg of cols) for (const fg of cols) {
     if (ckey(fg) === ckey(bg) || contrast(fg, bg) < MIN_CONTRAST) continue;
-    for (const m of ALL_MASKS) out.push({ kind: "Q", data: m, fg, bg });
-    for (const d of TRIS) out.push({ kind: "T", data: d, fg, bg });
+    for (const m of CANON_Q) out.push({ kind: "Q", data: m, fg, bg });
+    for (const d of CANON_T) out.push({ kind: "T", data: d, fg, bg });
   }
   return out;
 }
@@ -153,13 +158,17 @@ function targetsOf(c, r, cells) {
   return out;
 }
 
-function pickLegal(c, r, cells, rng) {                          // most edge-contiguous legal tile, kind-weighted
+function pickLegal(c, r, cells, rng, forceDiag) {               // most edge-contiguous legal tile, kind-weighted
   const targets = targetsOf(c, r, cells), cols = [];
   for (let i = 0; i < 4; i++) cols.push(choice(rng, PALETTE));  // free colours for unconstrained parts
   for (const [, t] of targets) cols.push(t[0], t[1]);
   const cand = SOLIDS.concat(twoColor(orderDedup(cols)));
-  const legals = cand.filter((x) => legal(x, c, r, cells));
+  let legals = cand.filter((x) => legal(x, c, r, cells));
   if (!legals.length) return null;
+  if (forceDiag) {                                             // take a diagonal if one is legal this turn
+    const diags = legals.filter((x) => x.kind === "Q" && isDiag(x.data));
+    if (diags.length) legals = diags;
+  }
   const score = (x) => targets.reduce((s, [e, t]) =>
     s + (ckey(edgeColors(x, e)[0]) === ckey(t[0])) + (ckey(edgeColors(x, e)[1]) === ckey(t[1])), 0);
   const scores = legals.map(score), bestScore = Math.max(...scores);
@@ -189,7 +198,7 @@ function repair(start, cells, rng) {                           // ignore one nei
   while (stack.length) {
     const x = stack.pop(), [xc, xr] = x;
     if (cells[xr][xc] !== null) continue;
-    if (hasLegal(xc, xr, cells)) { cells[xr][xc] = pickLegal(xc, xr, cells, rng); continue; }
+    if (hasLegal(xc, xr, cells)) { cells[xr][xc] = pickLegal(xc, xr, cells, rng, false); continue; }
     let nb = unblocking(xc, xr, cells);
     if (nb === null) { const pn = placedNbrs(xc, xr, cells); nb = pn.length ? pn[0] : null; }
     if (nb === null) { cells[xr][xc] = { kind: "Q", data: [false, false, false, false], fg: PALETTE[0], bg: PALETTE[0] }; continue; }
@@ -205,8 +214,9 @@ export function generate(text) {
   const order = [];
   for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) order.push([c, r]);
   shuffle(rng, order);
-  for (const [c, r] of order) {
-    if (hasLegal(c, r, cells)) cells[r][c] = pickLegal(c, r, cells, rng);
+  for (let turn = 0; turn < order.length; turn++) {
+    const [c, r] = order[turn];
+    if (hasLegal(c, r, cells)) cells[r][c] = pickLegal(c, r, cells, rng, turn === FORCE_DIAG_TURN);
     else repair([c, r], cells, rng);
   }
   return cells;

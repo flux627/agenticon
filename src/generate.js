@@ -29,6 +29,7 @@ const SOLIDS = PALETTE.map((x) => ({ kind: "Q", data: [false, false, false, fals
 const INCELL = { 0: [1, 2], 1: [0, 3], 2: [0, 3], 3: [1, 2] };  // in-cell orthogonal subpixels
 const SUBPX_EDGES = { 0: [["N", 0], ["W", 0]], 1: [["N", 1], ["E", 0]], 2: [["S", 0], ["W", 1]], 3: [["S", 1], ["E", 1]] };
 const EDGE_DIR = { N: [0, -1], S: [0, 1], W: [-1, 0], E: [1, 0] };
+const AREA_LIMIT = 2.5;    // no contiguous colour region may exceed this many tiles (1 = one cell)
 
 function edgeColors(cell, edge) {
   const { kind, data, fg, bg } = cell;
@@ -79,12 +80,53 @@ function orphaned(cell, c, r, getcell) {                        // a quarter wit
   return false;
 }
 
-function legal(tile, c, r, cells) {                             // orphans neither itself nor a placed neighbour
+// Largest contiguous same-colour region over the placed cells, in tile units (1 = one
+// cell). Regions are quarter-squares (0.25) and triangles (0.5); they merge on shared
+// edges -- orthogonal in-cell quarters, and same-colour edge-halves across a seam.
+const _AMAX = GW * GH * 4;
+const _col = new Int32Array(_AMAX), _ar = new Float64Array(_AMAX), _par = new Int32Array(_AMAX), _sum = new Float64Array(_AMAX);
+function maxRegionArea(cells) {
+  _col.fill(-1);
+  for (let i = 0; i < _AMAX; i++) { _par[i] = i; _ar[i] = 0; _sum[i] = 0; }
+  const find = (x) => { while (_par[x] !== x) { _par[x] = _par[_par[x]]; x = _par[x]; } return x; };
+  const uni = (a, b) => { a = find(a); b = find(b); if (a !== b) _par[a] = b; };
+  const owner = (cell, base, edge, pos) =>
+    cell.kind === "Q" ? base + EDGES[edge][pos]
+      : TRI_LEGS[cell.data].includes(edge) ? base : base + 1;
+  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) {
+    const cell = cells[r][c]; if (cell === null) continue;
+    const base = (r * GW + c) * 4;
+    if (cell.kind === "Q") {
+      for (let s = 0; s < 4; s++) { _col[base + s] = ckey(cell.data[s] ? cell.fg : cell.bg); _ar[base + s] = 0.25; }
+      for (const [a, b] of [[0, 1], [0, 2], [1, 3], [2, 3]]) if (_col[base + a] === _col[base + b]) uni(base + a, base + b);
+    } else {
+      _col[base] = ckey(cell.fg); _ar[base] = 0.5;             // triangle
+      _col[base + 1] = ckey(cell.bg); _ar[base + 1] = 0.5;     // complement
+    }
+  }
+  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) {
+    const cell = cells[r][c]; if (cell === null) continue;
+    const base = (r * GW + c) * 4;
+    if (c + 1 < GW && cells[r][c + 1] !== null) { const nb = cells[r][c + 1], nbase = (r * GW + c + 1) * 4;
+      for (const pos of [0, 1]) { const ia = owner(cell, base, "E", pos), ib = owner(nb, nbase, "W", pos); if (_col[ia] === _col[ib]) uni(ia, ib); } }
+    if (r + 1 < GH && cells[r + 1][c] !== null) { const nb = cells[r + 1][c], nbase = ((r + 1) * GW + c) * 4;
+      for (const pos of [0, 1]) { const ia = owner(cell, base, "S", pos), ib = owner(nb, nbase, "N", pos); if (_col[ia] === _col[ib]) uni(ia, ib); } }
+  }
+  let mx = 0;
+  for (let i = 0; i < _AMAX; i++) if (_col[i] !== -1) { const root = find(i); _sum[root] += _ar[i]; if (_sum[root] > mx) mx = _sum[root]; }
+  return mx;
+}
+
+function legal(tile, c, r, cells) {                             // orphans nothing, and respects the area cap
   const getcell = (gc, gr) => (gc === c && gr === r ? tile : cells[gr][gc]);
   if (orphaned(tile, c, r, getcell)) return false;
   for (const [nc, nr] of neighbours(c, r))
     if (cells[nr][nc] !== null && orphaned(cells[nr][nc], nc, nr, getcell)) return false;
-  return true;
+  const save = cells[r][c];                                     // would placing it grow a region past the cap?
+  cells[r][c] = tile;
+  const over = maxRegionArea(cells) > AREA_LIMIT;
+  cells[r][c] = save;
+  return !over;
 }
 
 function hasLegal(c, r, cells) {                                // feasibility, free of the colour draw

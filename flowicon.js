@@ -1,8 +1,9 @@
 /*
  * flowicon - SVG identicons via edge-continuity flow, recoloured onto a bold palette.
  *
- * A 4x2 grid of cells (quadrant blocks, corner triangles, shades), grown so adjacent
- * cells share a colour along their shared edge. A recolour pass then remaps the icon
+ * A 4x2 grid of cells (quadrant blocks, corner triangles, shades) filled in a shuffled
+ * order, each matched to one already-placed neighbour so they share a colour along their
+ * shared edge, growing a continuous flow across the grid. A recolour pass then remaps the icon
  * onto a small bold palette (1-5 OKLCH colours): originals are hue-sorted, grouped,
  * and shifted 70% toward their group's new colour in hue + saturation, with brightness
  * left untouched so every shape stays legible. On by default.
@@ -102,15 +103,6 @@ function randCell(rng) {
   const bg = choice(rng, PALETTE), fg = choice(rng, partners(bg)), k = pickKind(rng);
   return { kind: k, data: randData(rng, k), fg, bg };
 }
-function cellTouching(rng, edge, X) {
-  const ps = partners(X);
-  for (let i = 0; i < 150; i++) {
-    const k = pickKind(rng), useFg = rng() < 0.5;
-    const cell = { kind: k, data: randData(rng, k), fg: useFg ? X : choice(rng, ps), bg: useFg ? choice(rng, ps) : X };
-    if (has(edgeColors(cell, edge), X)) return cell;
-  }
-  return { kind: "S", data: "med", fg: X, bg: choice(rng, ps) };
-}
 function cellMatching(rng, cons) {
   if (!cons.length) return randCell(rng);
   let best = null, bestScore = -1;
@@ -130,22 +122,26 @@ function neighbours(c, r) {
   }
   return out;
 }
+function shuffle(rng, a) {                                 // Fisher-Yates; matches the Python shuffle
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 function generate(text) {
   const rng = makeRng(text);
   const cells = Array.from({ length: GH }, () => Array(GW).fill(null));
-  const undet = () => { const u = []; for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) if (!cells[r][c]) u.push([c, r]); return u; };
-  const twoAdj = () => undet().some(([c, r]) => neighbours(c, r).some(([nc, nr]) => !cells[nr][nc]));
-  while (twoAdj()) {
-    const seeds = undet().filter(([c, r]) => neighbours(c, r).some(([nc, nr]) => !cells[nr][nc]));
-    const [c, r] = choice(rng, seeds);
-    cells[r][c] = randCell(rng);
-    const nb = neighbours(c, r).filter(([nc, nr]) => !cells[nr][nc]);
-    const [nc, nr, e] = choice(rng, nb);
-    cells[nr][nc] = cellTouching(rng, OPP[e], choice(rng, edgeColors(cells[r][c], e)));
-  }
-  for (const [c, r] of undet()) {
-    const cons = neighbours(c, r).filter(([nc, nr]) => cells[nr][nc])
-      .map(([nc, nr, e]) => [e, new Set(edgeColors(cells[nr][nc], OPP[e]).map(ckey))]);
+  const order = [];
+  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) order.push([c, r]);
+  shuffle(rng, order);
+  for (const [c, r] of order) {
+    const placed = neighbours(c, r).filter(([nc, nr]) => cells[nr][nc]);
+    let cons = [];
+    if (placed.length) {                                  // grow from one already-placed neighbour
+      const [nc, nr, e] = choice(rng, placed);
+      cons = [[e, new Set(edgeColors(cells[nr][nc], OPP[e]).map(ckey))]];
+    }
     cells[r][c] = cellMatching(rng, cons);
   }
   return cells;

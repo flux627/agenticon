@@ -2,11 +2,11 @@
 """
 flowicon - terminal identicon via edge-continuity flow.
 
-A 4x2 grid of cells, each an independent (glyph, fg, bg). Adjacent cells are grown
-so they share a colour along their shared edge (phase A: re-seeded pairs, weak match;
-phase B: isolated cells matched to >=2 neighbours). Vocabulary: quadrant blocks,
-corner triangles (the legs read fg, the rest bg), and shades (which carry both
-colours on every edge, so they bridge anything).
+A 4x2 grid of cells, each an independent (glyph, fg, bg). Cells are filled in a
+shuffled order; each one is matched to a single already-placed neighbour so the two
+share a colour along their shared edge, growing a continuous flow across the grid.
+Vocabulary: quadrant blocks, corner triangles (the legs read fg, the rest bg), and
+shades (which carry both colours on every edge, so they bridge anything).
 
 Deterministic, and byte-compatible with flowicon.js: both share the cyrb128 + sfc32
 RNG and identical draw order, so a given string yields the same cells in the terminal
@@ -155,19 +155,6 @@ def _rand_cell(rng):
     return (k, _rand_data(rng, k), fg, bg)
 
 
-def _cell_touching(rng, edge, X):
-    ps = partners(X)
-    for _ in range(150):
-        k = _pick_kind(rng)
-        use_fg = rng() < 0.5
-        data = _rand_data(rng, k)                     # drawn before the fg/bg pick (matches JS)
-        fg, bg = (X, choice(rng, ps)) if use_fg else (choice(rng, ps), X)
-        cell = (k, data, fg, bg)
-        if X in edge_colors(cell, edge):
-            return cell
-    return ("S", "med", X, choice(rng, ps))           # shade always touches X
-
-
 def _cell_matching(rng, cons):
     if not cons:
         return _rand_cell(rng)
@@ -192,30 +179,25 @@ def _neighbours(c, r):
     return out
 
 
+def _shuffle(rng, a):
+    """In-place Fisher-Yates; matches the JS shuffle draw-for-draw."""
+    for i in range(len(a) - 1, 0, -1):
+        j = int(rng() * (i + 1))
+        a[i], a[j] = a[j], a[i]
+    return a
+
+
 def generate(text):
     """text -> {(col,row): (kind, data, fg, bg)} for the 4x2 grid."""
     rng = make_rng(text)
     cells = {}
-
-    def undet():
-        return [(c, r) for r in range(GH) for c in range(GW) if (c, r) not in cells]
-
-    def two_adj():
-        return any((nc, nr) not in cells
-                   for (c, r) in undet() for nc, nr, _ in _neighbours(c, r))
-
-    while two_adj():                                              # phase A
-        seeds = [(c, r) for (c, r) in undet()
-                 if any((nc, nr) not in cells for nc, nr, _ in _neighbours(c, r))]
-        c, r = choice(rng, seeds)
-        cells[(c, r)] = _rand_cell(rng)
-        nb = [(nc, nr, e) for nc, nr, e in _neighbours(c, r) if (nc, nr) not in cells]
-        nc, nr, e = choice(rng, nb)
-        X = choice(rng, edge_colors(cells[(c, r)], e))
-        cells[(nc, nr)] = _cell_touching(rng, OPP[e], X)
-    for (c, r) in undet():                                        # phase B
-        cons = [(e, set(edge_colors(cells[(nc, nr)], OPP[e])))
-                for nc, nr, e in _neighbours(c, r) if (nc, nr) in cells]
+    order = _shuffle(rng, [(c, r) for r in range(GH) for c in range(GW)])
+    for (c, r) in order:
+        placed = [(nc, nr, e) for nc, nr, e in _neighbours(c, r) if (nc, nr) in cells]
+        cons = []
+        if placed:                                    # grow from one already-placed neighbour
+            nc, nr, e = choice(rng, placed)
+            cons = [(e, set(edge_colors(cells[(nc, nr)], OPP[e])))]
         cells[(c, r)] = _cell_matching(rng, cons)
     return cells
 

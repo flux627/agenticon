@@ -1,5 +1,5 @@
 {
-  "name": "flowicon",
+  "name": "agenticon",
   "version": "2.0.0",
   "description": "Deterministic geometric identicons — crisp SVG for the web and ANSI block-glyph art for the terminal, from one shared generator.",
   "type": "module",
@@ -8,7 +8,7 @@
     ".": "./src/index.js"
   },
   "bin": {
-    "flowicon": "bin/flowicon.js"
+    "agenticon": "bin/agenticon.js"
   },
   "files": [
     "src",
@@ -19,7 +19,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "gallery": "node bin/flowicon.js --gallery"
+    "gallery": "node bin/agenticon.js --gallery"
   },
   "keywords": [
     "identicon",

@@ -35,7 +35,7 @@ function renderCell(cell, x, y, w, h) {
 }
 
 /** SVG string for `text`. opts: { size = 64, recolor = true }. */
-export function flowIcon(text, opts = {}) {
+export function agenticon(text, opts = {}) {
   const size = opts.size || 64;
   const cells = cellsFor(text, opts.recolor !== false);
   const cw = size / GW, ch = size / GH;
@@ -45,8 +45,8 @@ export function flowIcon(text, opts = {}) {
 }
 
 /** data: URI for an <img src> or CSS url(). */
-export function flowIconDataURI(text, opts = {}) {
-  return "data:image/svg+xml," + encodeURIComponent(flowIcon(text, opts));
+export function agenticonDataURI(text, opts = {}) {
+  return "data:image/svg+xml," + encodeURIComponent(agenticon(text, opts));
 }
 
 // ---- terminal: half-block glyphs + ANSI colour ----
@@ -91,7 +91,7 @@ function sgr(fg, bg, mode) {
 
 /** Two lines of ANSI-coloured block glyphs for `text`.
  *  opts: { recolor = true, mode = "truecolor" | "256", canonical = true }. */
-export function flowIconAnsi(text, opts = {}) {
+export function agenticonAnsi(text, opts = {}) {
   const recolor = opts.recolor !== false;
   const mode = opts.mode === "256" ? "256" : "truecolor";
   const canonical = opts.canonical !== false;
@@ -108,4 +108,4 @@ export function flowIconAnsi(text, opts = {}) {
   return lines.join("\n");
 }
 
-export default flowIcon;
+export default agenticon;

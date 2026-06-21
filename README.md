@@ -1,4 +1,4 @@
-# flowicon
+# agenticon
 
 Deterministic geometric identicons. One generator, two views: crisp **SVG** for the web
 and **ANSI block-glyph** art for the terminal.
@@ -12,20 +12,20 @@ pure function of the input string — same text, same icon, everywhere.
 ## Install
 
 ```sh
-npm install flowicon
+npm install agenticon
 ```
 
 ## Library
 
 ```js
-import { flowIcon, flowIconDataURI, flowIconAnsi } from "flowicon";
+import { agenticon, agenticonDataURI, agenticonAnsi } from "agenticon";
 
-flowIcon("alice@example.com");                 // -> <svg>…</svg> (recoloured)
-flowIcon("alice@example.com", { recolor: false, size: 48 });   // raw 16-colour flow
-flowIconDataURI("alice@example.com");          // -> data:image/svg+xml,… for <img src>
-flowIconAnsi("alice@example.com");             // -> two lines of ANSI block glyphs
+agenticon("alice@example.com");                 // -> <svg>…</svg> (recoloured)
+agenticon("alice@example.com", { recolor: false, size: 48 });   // raw 16-colour flow
+agenticonDataURI("alice@example.com");          // -> data:image/svg+xml,… for <img src>
+agenticonAnsi("alice@example.com");             // -> two lines of ANSI block glyphs
 
-// React:  <img src={flowIconDataURI(user.email)} alt="" width={48} height={48} />
+// React:  <img src={agenticonDataURI(user.email)} alt="" width={48} height={48} />
 ```
 
 Options:
@@ -43,13 +43,13 @@ Also exported: `generate(text)` (the raw `cells[row][col]` grid), `buildRecolorM
 ## CLI
 
 ```sh
-flowicon alice@example.com        # terminal icon
-flowicon --gallery                # a sample set
-flowicon --svg alice@example.com  # emit SVG to stdout
-flowicon alice --no-recolor --256 # raw flow, 8-bit colour
+agenticon alice@example.com        # terminal icon
+agenticon --gallery                # a sample set
+agenticon --svg alice@example.com  # emit SVG to stdout
+agenticon alice --no-recolor --256 # raw flow, 8-bit colour
 ```
 
-Run `flowicon --help` for all flags.
+Run `agenticon --help` for all flags.
 
 ## License
 

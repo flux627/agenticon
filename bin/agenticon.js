@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// flowicon CLI — print identicons to the terminal (ANSI block glyphs) or emit SVG.
-import { flowIcon, flowIconAnsi } from "../src/index.js";
+// agenticon CLI — print identicons to the terminal (ANSI block glyphs) or emit SVG.
+import { agenticon, agenticonAnsi } from "../src/index.js";
 
-const USAGE = `flowicon — deterministic geometric identicons
+const USAGE = `agenticon — deterministic geometric identicons
 
 Usage:
-  flowicon <text...>        render each text as a terminal icon
-  flowicon --gallery        render a sample set
-  flowicon --svg <text>     emit an SVG document instead of terminal glyphs
+  agenticon <text...>        render each text as a terminal icon
+  agenticon --gallery        render a sample set
+  agenticon --svg <text>     emit an SVG document instead of terminal glyphs
 
 Options:
   --no-recolor   raw 16-colour flow (skip the bold-palette remap)
@@ -41,7 +41,7 @@ function main(argv) {
 
   if (flag("--gallery")) {
     for (const name of GALLERY) {
-      const [top, bot] = flowIconAnsi(name, opts).split("\n");
+      const [top, bot] = agenticonAnsi(name, opts).split("\n");
       console.log(`${top}   ${name}`);
       console.log(bot);
       console.log();
@@ -51,8 +51,8 @@ function main(argv) {
   if (!texts.length) { console.log(USAGE); return 1; }
 
   for (const text of texts) {
-    if (svg) console.log(flowIcon(text, opts));
-    else console.log(flowIconAnsi(text, opts) + "\n");
+    if (svg) console.log(agenticon(text, opts));
+    else console.log(agenticonAnsi(text, opts) + "\n");
   }
   return 0;
 }

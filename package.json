@@ -19,7 +19,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "gallery": "node bin/agenticon.js --gallery"
+    "gallery": "node bin/agenticon.js --gallery",
+    "analyze": "node scripts/analyze.mjs"
   },
   "keywords": [
     "identicon",

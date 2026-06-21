@@ -1,0 +1,34 @@
+{
+  "name": "flowicon",
+  "version": "2.0.0",
+  "description": "Deterministic geometric identicons — crisp SVG for the web and ANSI block-glyph art for the terminal, from one shared generator.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "flowicon": "bin/flowicon.js"
+  },
+  "files": [
+    "src",
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "gallery": "node bin/flowicon.js --gallery"
+  },
+  "keywords": [
+    "identicon",
+    "avatar",
+    "svg",
+    "terminal",
+    "ansi",
+    "deterministic",
+    "generative"
+  ],
+  "license": "MIT"
+}

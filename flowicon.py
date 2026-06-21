@@ -2,11 +2,11 @@
 """
 flowicon - terminal identicon via edge-continuity flow.
 
-A 4x2 grid of cells, each an independent (glyph, fg, bg). Cells are filled in a
-shuffled order; each one is matched to a single already-placed neighbour so the two
-share a colour along their shared edge, growing a continuous flow across the grid.
-Vocabulary: quadrant blocks, corner triangles (the legs read fg, the rest bg), and
-shades (which carry both colours on every edge, so they bridge anything).
+A 4x2 grid of cells (solids, halves, corner blocks, diagonals, corner triangles).
+Cells are filled in a shuffled order; at each one we enumerate the legal tiles -- those
+that leave no orphaned 1/4 square (every quarter shares a colour with a neighbour
+in-cell or across a seam) -- and pick the most edge-contiguous, growing a continuous
+flow across the grid. A rare deadlock is resolved by re-placing one neighbour.
 
 Deterministic, and byte-compatible with flowicon.js: both share the cyrb128 + sfc32
 RNG and identical draw order, so a given string yields the same cells in the terminal
@@ -119,55 +119,105 @@ GW, GH = 4, 2
 EDGES = {"N": (0, 1), "S": (2, 3), "W": (0, 2), "E": (1, 3)}   # subpixels 0UL 1UR 2LL 3LR
 OPP = {"N": "S", "S": "N", "E": "W", "W": "E"}
 TRI_LEGS = {"UL": {"N", "W"}, "UR": {"N", "E"}, "LL": {"S", "W"}, "LR": {"S", "E"}}
-KINDS = [("Q", 0.50), ("T", 0.32), ("S", 0.18)]
+WEIGHTS = {"Q": 0.50, "T": 0.32}                  # kind preference among legal candidates
+ALL_MASKS = [
+    (False, False, False, False), (False, False, False, True),
+    (False, False, True, False), (False, False, True, True),
+    (False, True, False, False), (False, True, False, True),
+    (False, True, True, False), (False, True, True, True),
+    (True, False, False, False), (True, False, False, True),
+    (True, False, True, False), (True, False, True, True),
+    (True, True, False, False), (True, True, False, True),
+    (True, True, True, False), (True, True, True, True),
+]
+TRIS = ("UL", "UR", "LL", "LR")
+INCELL = {0: (1, 2), 1: (0, 3), 2: (0, 3), 3: (1, 2)}          # in-cell orthogonal subpixels
+SUBPX_EDGES = {0: (("N", 0), ("W", 0)), 1: (("N", 1), ("E", 0)),
+               2: (("S", 0), ("W", 1)), 3: (("S", 1), ("E", 1))}
+EDGE_DIR = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}
 
 
 def edge_colors(cell, edge):
     kind, data, fg, bg = cell
     if kind == "Q":
         return [fg if data[i] else bg for i in EDGES[edge]]
-    if kind == "T":
-        return [fg, fg] if edge in TRI_LEGS[data] else [bg, bg]
-    return [fg, bg]                                   # shade: both colours everywhere
+    return [fg, fg] if edge in TRI_LEGS[data] else [bg, bg]    # triangle legs read fg
 
 
-def _rand_data(rng, kind):
-    if kind == "Q":
-        return tuple(rng() < 0.5 for _ in range(4))
-    if kind == "T":
-        return choice(rng, ["UL", "UR", "LL", "LR"])
-    return choice(rng, ["light", "med", "dark"])
+SOLIDS = [("Q", (False, False, False, False), x, x) for x in PALETTE]   # always-legal floor
 
 
-def _pick_kind(rng):
-    x, acc = rng(), 0.0
-    for k, w in KINDS:
-        acc += w
-        if x < acc:
-            return k
-    return "Q"
+def _order_dedup(seq):
+    out = []
+    for x in seq:
+        if x not in out:
+            out.append(x)
+    return out
 
 
-def _rand_cell(rng):
-    bg = choice(rng, PALETTE)
-    fg = choice(rng, partners(bg))
-    k = _pick_kind(rng)
-    return (k, _rand_data(rng, k), fg, bg)
+def _two_color(cols):
+    """Every two-colour tile over `cols`: quadrant masks + corner triangles."""
+    out = []
+    for bg in cols:
+        for fg in cols:
+            if fg == bg or contrast(fg, bg) < MIN_CONTRAST:
+                continue
+            for m in ALL_MASKS:
+                out.append(("Q", m, fg, bg))
+            for d in TRIS:
+                out.append(("T", d, fg, bg))
+    return out
 
 
-def _cell_matching(rng, cons):
-    if not cons:
-        return _rand_cell(rng)
-    best, best_score = None, -1
-    for _ in range(300):
-        cell = _rand_cell(rng)
-        score = sum(1 for e, allowed in cons
-                    if any(c in allowed for c in edge_colors(cell, e)))
-        if score > best_score:
-            best, best_score = cell, score
-            if score == len(cons):
+def _orphaned(cell, c, r, getcell):
+    """True if `cell` at (c,r) has a quarter with no same-colour support: none in its
+    own cell and none across a seam into a *placed* neighbour. An unplaced neighbour
+    counts as deferred (undefined), so it is never a definite orphan."""
+    if cell[0] == "T":
+        return False                                  # triangles are self-connected
+    _, data, fg, bg = cell
+    cols = [fg if data[i] else bg for i in range(4)]
+    for q in range(4):
+        col = cols[q]
+        if any(cols[j] == col for j in INCELL[q]):
+            continue                                  # supported within the cell
+        ok = False
+        for edge, pos in SUBPX_EDGES[q]:
+            dc, dr = EDGE_DIR[edge]
+            nc, nr = c + dc, r + dr
+            if not (0 <= nc < GW and 0 <= nr < GH):
+                continue                              # image border: no support
+            nb = getcell((nc, nr))
+            if nb is None or edge_colors(nb, OPP[edge])[pos] == col:
+                ok = True                             # deferred (unplaced) or placed match
                 break
-    return best
+        if not ok:
+            return True
+    return False
+
+
+def _legal(tile, c, r, cells):
+    """Legal iff placing it orphans neither itself nor any placed neighbour."""
+    def getcell(p):
+        return tile if p == (c, r) else cells.get(p)
+    if _orphaned(tile, c, r, getcell):
+        return False
+    for nc, nr, _ in _neighbours(c, r):
+        if (nc, nr) in cells and _orphaned(cells[(nc, nr)], nc, nr, getcell):
+            return False
+    return True
+
+
+def _has_legal(c, r, cells):
+    """Feasibility: does any legal tile exist here? (free of the random colour draw)."""
+    tcols = []
+    for nc, nr, e in _neighbours(c, r):
+        if (nc, nr) in cells:
+            t = edge_colors(cells[(nc, nr)], OPP[e])
+            tcols.append(t[0]); tcols.append(t[1])
+    if any(_legal(x, c, r, cells) for x in SOLIDS):
+        return True
+    return any(_legal(x, c, r, cells) for x in _two_color(_order_dedup(tcols)))
 
 
 def _neighbours(c, r):
@@ -187,18 +237,91 @@ def _shuffle(rng, a):
     return a
 
 
+def _targets(c, r, cells):
+    return [(e, edge_colors(cells[(nc, nr)], OPP[e]))
+            for nc, nr, e in _neighbours(c, r) if (nc, nr) in cells]
+
+
+def _pick_legal(c, r, cells, rng):
+    """Pick among the legal tiles: most edge-contiguous, then kind-weighted."""
+    targets = _targets(c, r, cells)
+    cols = [choice(rng, PALETTE) for _ in range(4)]   # free colours for unconstrained parts
+    for e, t in targets:
+        cols.append(t[0]); cols.append(t[1])
+    cols = _order_dedup(cols)
+    legals = [x for x in SOLIDS + _two_color(cols) if _legal(x, c, r, cells)]
+    if not legals:
+        return None
+    def score(x):
+        return sum((edge_colors(x, e)[0] == t[0]) + (edge_colors(x, e)[1] == t[1])
+                   for e, t in targets)
+    best_score = max(score(x) for x in legals)
+    best = [x for x in legals if score(x) == best_score]
+    pools = [(k, [x for x in best if x[0] == k]) for k in ("Q", "T")]
+    pools = [(k, p) for k, p in pools if p]
+    tot = sum(WEIGHTS[k] for k, _ in pools)
+    x, acc, chosen = rng() * tot, 0.0, pools[-1][1]
+    for k, p in pools:
+        acc += WEIGHTS[k]
+        if x < acc:
+            chosen = p
+            break
+    return chosen[int(rng() * len(chosen))]
+
+
+def _placed_nbrs(c, r, cells):
+    return [(nc, nr) for nc, nr, _ in _neighbours(c, r) if (nc, nr) in cells]
+
+
+def _unblocking(c, r, cells):
+    """A placed neighbour whose removal would give (c,r) a legal option again."""
+    for nb in _placed_nbrs(c, r, cells):
+        saved = cells.pop(nb)
+        ok = _has_legal(c, r, cells)
+        cells[nb] = saved
+        if ok:
+            return nb
+    return None
+
+
+def _repair(start, cells, rng):
+    """Deadlock fix: ignore one offending neighbour, place the stuck cell, then
+    re-place the neighbour; cascade if that re-placement is itself stuck."""
+    stack = [start]
+    while stack:
+        x = stack.pop()
+        if x in cells:
+            continue
+        if _has_legal(x[0], x[1], cells):
+            cells[x] = _pick_legal(x[0], x[1], cells, rng)
+            continue
+        nb = _unblocking(x[0], x[1], cells)
+        if nb is None:
+            pn = _placed_nbrs(x[0], x[1], cells)
+            nb = pn[0] if pn else None
+        if nb is None:
+            cells[x] = ("Q", (False, False, False, False), PALETTE[0], PALETTE[0])
+            continue
+        del cells[nb]
+        stack.append(nb)
+        stack.append(x)
+
+
 def generate(text):
-    """text -> {(col,row): (kind, data, fg, bg)} for the 4x2 grid."""
+    """text -> {(col,row): (kind, data, fg, bg)} for the 4x2 grid.
+
+    Cells are filled in a shuffled order. At each cell we enumerate the legal tiles
+    (those that orphan no quarter of themselves or a placed neighbour) and pick the
+    most edge-contiguous one, kind-weighted. A rare deadlock (no legal tile) is fixed
+    by re-placing one neighbour. Vocabulary: solids, halves, corner blocks, diagonals,
+    and corner triangles -- byte-compatible with flowicon.js."""
     rng = make_rng(text)
     cells = {}
-    order = _shuffle(rng, [(c, r) for r in range(GH) for c in range(GW)])
-    for (c, r) in order:
-        placed = [(nc, nr, e) for nc, nr, e in _neighbours(c, r) if (nc, nr) in cells]
-        cons = []
-        if placed:                                    # grow from one already-placed neighbour
-            nc, nr, e = choice(rng, placed)
-            cons = [(e, set(edge_colors(cells[(nc, nr)], OPP[e])))]
-        cells[(c, r)] = _cell_matching(rng, cons)
+    for (c, r) in _shuffle(rng, [(c, r) for r in range(GH) for c in range(GW)]):
+        if _has_legal(c, r, cells):
+            cells[(c, r)] = _pick_legal(c, r, cells, rng)
+        else:
+            _repair((c, r), cells, rng)
     return cells
 
 

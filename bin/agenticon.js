@@ -42,8 +42,8 @@ function main(argv) {
   if (flag("--gallery")) {
     for (const name of GALLERY) {
       const [top, bot] = agenticonAnsi(name, opts).split("\n");
-      console.log(`${top}   ${name}`);
-      console.log(bot);
+      console.log(`  ${top}   ${name}`);
+      console.log(`  ${bot}`);
       console.log();
     }
     return 0;

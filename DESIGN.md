@@ -97,29 +97,40 @@ Once the grid is settled, `addDiagonals` decorates some solid tiles. The 4×2 gr
 5×3 lattice of vertices; only **3** sit off the icon's border — the mid-grid points on the
 horizontal centre line (columns 1–3). Each solid tile touches 1 or 2 of them (a top-row
 tile's bottom corners, a bottom-row tile's top corners). For each solid, with probability
-`DIAG_PROB` (0.5), pick one of its interior-vertex corners and draw a `╱`/`╲` stroke from
-that vertex across the tile to the opposite corner, in a colour **borrowed from a neighbour
-meeting at the vertex** (the corner-quarter colours of the other ≤3 cells there, minus the
-tile's own colour).
+`DIAG_PROB` (0.5), one interior-vertex corner gets a `╱`/`╲` accent running across the tile
+to the opposite corner. The accent is **not a free-floating stroke**: it's a colour that
+borders the vertex *leaking out of it* into the host tile, so it reads as that colour, not as
+a line drawn on top. Three things disqualify a candidate (realised rate ~0.7 accents/icon):
 
-Three things disqualify a candidate, so the realised rate is well under half the solids
-(~0.7 accents/icon):
+- **Colour-isolated solids are skipped** — eligibility needs an edge-neighbour sharing the
+  tile's colour across the seam (a self-supporting lone island gets nothing).
+- **One line per vertex** — a claimed vertex is off-limits (`used` set, scanned row-major); a
+  displaced tile falls back to its other interior vertex.
+- **No borrowable colour** — if every neighbour at the vertex matches the host, drop it.
 
-- **Colour-isolated solids are skipped.** A solid is self-supporting, so it can be a lone
-  island of its colour; such a tile gets no accent. Eligibility requires at least one
-  edge-neighbour that shares the tile's colour across their seam.
-- **One line per vertex.** A vertex that already carries a line is off-limits to every other
-  tile (the pass tracks claimed vertices in a `used` set, scanned left-to-right top-to-bottom).
-  A tile whose pick is taken simply falls back to its other interior vertex, if it has one.
-- **No borrowable colour.** If every neighbour at a candidate vertex matches the tile's own
-  colour, there is nothing to draw with, and that vertex is dropped.
+**Where the accent merges (`generate`).** The colour and the connection are chosen so the
+vertex end lands *on* a matching tile and is consumed there:
 
-It is a pure overlay: it sets `cell.diag = { dir, color }` and never touches `kind/data/
-fg/bg`, so the tile structure — and every invariant below — is unchanged. The stroke draws
-as a round-capped `<line>` (SVG, width `DIAG_STROKE`×cell, ends centred on the vertex and the
-opposite corner) or a `╱`/`╲` glyph (terminal, accent fg over the solid bg). One stroke per
-tile by design (matching "╱ or ╲"); two never combine into a cross. The borrowed colour is a
-real cell colour, so the recolour remap carries it along.
+- The **diagonally-opposite** tile is preferred (the accent runs *straight through* the vertex
+  into it). If that tile is solid, the band stays centred on the diagonal; if its matching
+  colour is only a triangle half (or partial), the band shifts to the side where that half's
+  **centroid** sits, so it rides the matching half and not the boundary. This side comes purely
+  from the opposite tile's geometry — the perpendicular tiles' colours are irrelevant.
+- Otherwise the colour comes from a **side** tile, and `off = [dx,dy]` records which edge to
+  cross. The far (always-border) corner runs off the icon edge.
+
+`cell.diag = { dir, color, off }`; it never touches `kind/data/fg/bg`, so the tile structure —
+and every invariant below — is unchanged.
+
+**How it draws (`render`).** In SVG the accent is a polygon coloured `color`, drawn last:
+*straight* is a full-width band run through the vertex into the opposite tile (consumed there);
+*offset* is a parallelogram whose one long side is the tile's bisecting diagonal and whose
+other side crosses the bordering edge into the matching tile. Either way neither end tapers —
+the vertex end is consumed by the matching colour, and the opposite end (always on the top/
+bottom border) is extended past the corner so the icon edge clips it (it runs off, no chop).
+Width is `DIAG_STROKE`×cell. In the terminal it stays a single `╱`/`╲` glyph (accent fg over
+the solid bg) — the merge geometry is SVG-only. The colour is a real cell colour, so the
+recolour remap carries it along.
 
 > A placed solid is a **shared** `SOLIDS` object reused across every icon, so the pass
 > *clones* the cell to attach `diag` — mutating in place would leak the accent into later
@@ -146,7 +157,7 @@ All in `src/generate.js` unless noted:
 | `MIN_CONTRAST` | 3.0 | min fg/bg contrast for two-colour tiles (lower = muddier tiles, fewer deadlocks) |
 | `KIND_W` | `{Q:.5, T:.32}` | Q-vs-T balance among the best-contiguity tiles |
 | `DIAG_PROB` | 0.5 | chance a solid tile gets a diagonal accent (0 = off) |
-| `DIAG_STROKE` | 0.05 | accent line width (SVG, round-capped), as a fraction of the cell's shorter side (`render.js`) |
+| `DIAG_STROKE` | 0.05 | accent band width (SVG), as a fraction of the cell's shorter side (`render.js`) |
 | recolour `N_WEIGHTS` | (`recolor.js`) | distribution of palette size (1–5 colours) |
 
 ## Recolour

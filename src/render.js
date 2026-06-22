@@ -31,6 +31,16 @@ const DIAG_STROKE = 0.05;   // accent line width, as a fraction of the cell's sh
 // seamless union (no internal edges to conflate). Only genuine colour boundaries remain, and the
 // dominant colour underlays everything as a backdrop so those never expose the page.
 const shoelace = (p) => { let s = 0; for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length]; s += a[0] * b[1] - b[0] * a[1]; } return s / 2; };
+// Sutherland-Hodgman: keep the part of `poly` where f(point) <= 0 (clip to one half-plane).
+function clipHalf(poly, f) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], fa = f(a), fb = f(b);
+    if (fa <= 0) out.push(a);
+    if ((fa <= 0) !== (fb <= 0)) { const t = fa / (fa - fb); out.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]); }
+  }
+  return out;
+}
 function faceGroups(cells) {
   const groups = new Map();                                  // ckey -> { rgb, polys, area }
   const add = (rgb, pts) => {
@@ -67,12 +77,44 @@ export function agenticon(text, opts = {}) {
     const d = g.polys.map((p) => "M" + p.map(([x, y]) => `${x * sx} ${y * sy}`).join("L") + "Z").join("");
     body += `<path d="${d}" fill="${hex(g.rgb)}"/>`;
   }
-  const cw = size / GW, ch = size / GH;                       // accent strokes ride on top
-  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) {
-    const cell = cells[r][c]; if (!cell.diag) continue;
-    const x = c * cw, y = r * ch;
-    const [x1, y1, x2, y2] = cell.diag.dir === "\\" ? [x, y, x + cw, y + ch] : [x, y + ch, x + cw, y];
-    body += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${hex(cell.diag.color)}" stroke-width="${Math.min(cw, ch) * DIAG_STROKE}" stroke-linecap="round"/>`;
+  // Accent strokes ride on top. The stroke is the borrowed colour leaking out of the vertex V into
+  // the host tile, so its vertex end has to land *on* the matching colour. STRAIGHT (off=null): the
+  // colour is straight across V, so the band tapers to a point at V (it meets that colour there) and
+  // to a point at the far corner O. OFFSET (off=[dx,dy]): the colour is in a side tile, so the band
+  // is shifted perpendicular toward that side and run past V across the bordering edge, where it is
+  // consumed by the matching colour; it's clipped to host+neighbour so it can't spill elsewhere.
+  const cw = size / GW, ch = size / GH, rad = Math.min(cw, ch) * DIAG_STROKE / 2;
+  const taper = 2 * rad * Math.max(cw, ch) / Math.min(cw, ch);
+  for (let gr = 0; gr < GH; gr++) for (let gc = 0; gc < GW; gc++) {
+    const cell = cells[gr][gc]; if (!cell.diag) continue;
+    const { dir, color, off } = cell.diag, x = gc * cw, y = gr * ch;
+    const TL = [x, y], TR = [x + cw, y], BL = [x, y + ch], BR = [x + cw, y + ch];
+    const [V, O] = dir === "\\" ? (gr === 0 ? [BR, TL] : [TL, BR]) : (gr === 0 ? [BL, TR] : [TR, BL]);
+    const L = Math.hypot(V[0] - O[0], V[1] - O[1]), d = [(V[0] - O[0]) / L, (V[1] - O[1]) / L];   // O -> V
+    const q = [-d[1] * rad, d[0] * rad];                       // perpendicular half-width
+    const tx = d[0] * taper, ty = d[1] * taper;
+    let pts;
+    // O is always on the icon's top/bottom border, so that end runs off the icon: extend it past O
+    // (away from V) and let the clip / viewport cut it along the border -- no taper, no chop.
+    const eo = ch, ox = O[0] - d[0] * eo, oy = O[1] - d[1] * eo;
+    if (!off) {
+      // straight: a full-width band that runs through V and past it into the diagonally-opposite
+      // tile (same colour), where its end is consumed -- no taper either side.
+      const ex = V[0] + d[0] * taper, ey = V[1] + d[1] * taper;   // flat end pushed past V into the origin
+      pts = [[ox + q[0], oy + q[1]], [ex + q[0], ey + q[1]], [ex - q[0], ey - q[1]], [ox - q[0], oy - q[1]]];
+    } else {
+      // The band sits entirely on the colour side of the diagonal: its trailing edge IS the
+      // diagonal (through V and O) -- a perpendicular shift of exactly the half-width -- so it can't
+      // spill into the far (non-matching) tile. Full width `2*rad` perpendicular; near V the leading
+      // edge crosses the bordering edge into the matching colour and is consumed there. The crossing
+      // length up the edge is 2*rad/sin(angle), which falls out of the geometry -- no magic constant.
+      let n = [-d[1], d[0]];                                   // perpendicular toward the colour side
+      if (n[0] * off[0] + n[1] * off[1] < 0) n = [d[1], -d[0]];
+      const w = 2 * rad;                                      // clean parallelogram (the "rectangle"):
+      pts = [[ox, oy], V, [V[0] + n[0] * w, V[1] + n[1] * w],  // one side IS the diagonal (O->V, bisects tile);
+             [ox + n[0] * w, oy + n[1] * w]];                  // the opposite side rides at +w, into the colour
+    }
+    if (pts.length > 2) body += `<polygon points="${pts.map((p) => `${p[0]} ${p[1]}`).join(" ")}" fill="${hex(color)}"/>`;
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${body}</svg>`;
 }

@@ -216,6 +216,24 @@ function cornerColor(cell, i) {                                // colour of the 
 const isSolid = (cell) =>                                      // renders as a single colour (only Q solids exist)
   cell.kind === "Q" && [1, 2, 3].every((i) => ckey(cornerColor(cell, i)) === ckey(cornerColor(cell, 0)));
 
+// Centroid (in cell-corner lattice coords) of the part of `cell` painted `key`. A solid tile's
+// is its centre; a triangle's is its fg/bg half -- this is what tells the accent which side of
+// the diagonal the matching colour actually sits on.
+function colorCentroid(cell, cc, cr, key) {
+  let sx = 0, sy = 0, n = 0;
+  if (cell.kind === "Q") {
+    const ctr = [[cc + .25, cr + .25], [cc + .75, cr + .25], [cc + .25, cr + .75], [cc + .75, cr + .75]];
+    for (let i = 0; i < 4; i++) if (ckey(cell.data[i] ? cell.fg : cell.bg) === key) { sx += ctr[i][0]; sy += ctr[i][1]; n++; }
+  } else {
+    const TL = [cc, cr], TR = [cc + 1, cr], BL = [cc, cr + 1], BR = [cc + 1, cr + 1];
+    const tri = { UL: [[TL, TR, BL], [TR, BR, BL]], UR: [[TL, TR, BR], [TL, BR, BL]],
+                  LL: [[TL, BL, BR], [TL, TR, BR]], LR: [[TR, BL, BR], [TL, TR, BL]] }[cell.data];
+    [cell.fg, cell.bg].forEach((col, t) => { if (ckey(col) === key) { const p = tri[t];
+      sx += (p[0][0] + p[1][0] + p[2][0]) / 3; sy += (p[0][1] + p[1][1] + p[2][1]) / 3; n++; } });
+  }
+  return n ? [sx / n, sy / n] : null;
+}
+
 function hasColorNbr(c, r, cells, key) {                       // an edge-neighbour sharing `key` across the seam
   for (const [nc, nr, e] of neighbours(c, r)) {
     const t = edgeColors(cells[nr][nc], OPP[e]);
@@ -226,10 +244,12 @@ function hasColorNbr(c, r, cells, key) {                       // an edge-neighb
 
 // After the grid is settled, give some solid tiles a diagonal accent: a slash from an interior
 // vertex (one of the 3 mid-grid points off the icon's border) across the tile to its opposite
-// corner, in a colour borrowed from a neighbour meeting at that vertex. Purely decorative -- it
-// only sets cell.diag, leaving the tile structure (and thus every invariant) untouched. Rules:
-// a solid in colour-isolation (no same-colour edge-neighbour) is skipped, and at most one line
-// may terminate at any vertex -- a tile whose pick is taken falls back to its other vertex.
+// corner, coloured to match a tile meeting at that vertex so it reads as that colour *flowing out*
+// of the vertex. Purely decorative -- it only sets cell.diag, leaving the tile structure (and thus
+// every invariant) untouched. The colour is taken from the diagonally-opposite tile when that
+// contrasts (the stroke then runs straight through the vertex into it, `off = null`); otherwise
+// from a side tile, recording `off = [dx,dy]` so the renderer can shift the stroke across that edge
+// to merge. Rules: colour-isolated solids are skipped, and at most one line may end at any vertex.
 function addDiagonals(cells, rng) {
   const used = new Set();                                      // interior vertices already claimed by a line
   for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) {
@@ -237,24 +257,38 @@ function addDiagonals(cells, rng) {
     if (!isSolid(cell)) continue;
     const self = ckey(cornerColor(cell, 0));
     if (!hasColorNbr(c, r, cells, self)) continue;            // skip colour-isolated solids
-    const cands = [];                                          // [cornerIndex, vc, vr, candidate borrow-colours]
+    const cands = [];                                          // [cornerIndex, vc, vr, color, off]
     for (let i = 0; i < 4; i++) {
       const vc = c + (i & 1), vr = r + (i >> 1);               // lattice point of corner i
       if (!(vc > 0 && vc < GW && vr > 0 && vr < GH)) continue; // interior vertices only
       if (used.has(vc * GH + vr)) continue;                   // a line already terminates here
-      const colors = [];
-      for (const [ac, ar, ai] of [[vc - 1, vr - 1, 3], [vc, vr - 1, 2], [vc - 1, vr, 1], [vc, vr, 0]]) {
-        if (ac === c && ar === r) continue;                   // skip the tile itself
+      const around = [[vc - 1, vr - 1, 3], [vc, vr - 1, 2], [vc - 1, vr, 1], [vc, vr, 0]];
+      let diagCol = null, diagC = -1, diagR = -1; const edges = [];   // opposite tile; side tiles [col,dx,dy]
+      for (const [ac, ar, ai] of around) {
+        if (ac === c && ar === r) continue;
         const col = cornerColor(cells[ar][ac], ai);
-        if (ckey(col) !== self) colors.push(col);
+        if (ac !== c && ar !== r) { diagCol = col; diagC = ac; diagR = ar; }
+        else edges.push([col, ac - c, ar - r]);
       }
-      if (colors.length) cands.push([i, vc, vr, colors]);
+      let color = null, off = null;
+      if (diagCol && ckey(diagCol) !== self) {                // straight through into the opposite tile -- but if
+        color = diagCol;                                      // its matching colour is only a triangle half, the
+        const ctr = colorCentroid(cells[diagR][diagC], diagC, diagR, ckey(diagCol));   // band must shift to that
+        const ox = c + (i & 1 ? 0 : 1), oy = r + (i >> 1 ? 0 : 1);   // side. d = past-V direction (O->V continued)
+        const dx = vc - ox, dy = vr - oy, s = (ctr[0] - vc) * dy - (ctr[1] - vr) * dx;   // which side the half is on
+        if (Math.abs(s) > 1e-9) for (const [, edx, edy] of edges)    // 0 => solid, stays centred
+          if (((c + edx + .5 - vc) * dy - (r + edy + .5 - vr) * dx > 0) === (s > 0)) { off = [edx, edy]; break; }
+      } else {                                                // opposite tile doesn't contrast -> a side tile
+        const e = edges.find((e) => ckey(e[0]) !== self);
+        if (e) { color = e[0]; off = [e[1], e[2]]; }
+      }
+      if (color) cands.push([i, vc, vr, color, off]);
     }
     if (!cands.length || rng() >= DIAG_PROB) continue;
-    const [i, vc, vr, colors] = cands[Math.floor(rng() * cands.length)];
+    const [i, vc, vr, color, off] = cands[Math.floor(rng() * cands.length)];
     used.add(vc * GH + vr);
     // clone, never mutate: a placed solid is a shared SOLIDS object reused across icons
-    cells[r][c] = { ...cell, diag: { dir: i === 0 || i === 3 ? "\\" : "/", color: colors[Math.floor(rng() * colors.length)] } };
+    cells[r][c] = { ...cell, diag: { dir: i === 0 || i === 3 ? "\\" : "/", color, off } };
   }
 }
 

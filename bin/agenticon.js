@@ -15,6 +15,7 @@ Options:
   --literal      emit literal glyphs (no fg/bg-swap canonicalisation)
   --svg          output SVG to stdout
   --size <n>     SVG size in px (default 64; implies --svg)
+  --tile-size <n>  terminal: blow each tile up into an n×n glyph block (default 1)
   -h, --help     show this help`;
 
 const GALLERY = ["alice@example.com", "bob@example.com", "carol", "dave",
@@ -24,26 +25,26 @@ function main(argv) {
   if (argv.includes("-h") || argv.includes("--help")) { console.log(USAGE); return 0; }
 
   const flag = (name) => argv.includes(name);
-  let size;
-  const si = argv.indexOf("--size");
-  if (si !== -1 && argv[si + 1]) size = parseInt(argv[si + 1], 10);
+  const numArg = (name) => { const i = argv.indexOf(name); return (i !== -1 && argv[i + 1]) ? parseInt(argv[i + 1], 10) : undefined; };
+  const size = numArg("--size"), tileSize = numArg("--tile-size");
   const svg = flag("--svg") || size !== undefined;
   const opts = {
     recolor: !flag("--no-recolor"),
     mode: flag("--256") ? "256" : "truecolor",
     canonical: !flag("--literal"),
-    size: size || 64,
   };
+  if (svg) opts.size = size || 64;               // SVG: pixels
+  else opts.scale = tileSize || 1;               // terminal: tile multiplier
 
-  const skip = new Set(["--size", String(size)]);
+  const valued = new Set(["--size", "--tile-size"]);
+  const skip = new Set([...valued, String(size), String(tileSize)]);
   const texts = argv.filter((a, i) =>
-    !a.startsWith("-") && !skip.has(a) && argv[i - 1] !== "--size");
+    !a.startsWith("-") && !skip.has(a) && !valued.has(argv[i - 1]));
 
   if (flag("--gallery")) {
     for (const name of GALLERY) {
-      const [top, bot] = agenticonAnsi(name, opts).split("\n");
-      console.log(`  ${top}   ${name}`);
-      console.log(`  ${bot}`);
+      const rows = agenticonAnsi(name, opts).split("\n");
+      rows.forEach((row, i) => console.log(i === 0 ? `  ${row}   ${name}` : `  ${row}`));
       console.log();
     }
     return 0;

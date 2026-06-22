@@ -195,21 +195,60 @@ const TRI2GLYPH = { UL: "◤", UR: "◥", LL: "◣", LR: "◢" };
 const maskKey = (data) => data.map((b) => (b ? 1 : 0)).join("");
 
 // Canonical form: fg/bg swaps shrink the glyph set (quadrants 16->8, triangles 4->2)
-// and never emit the full block. Returns [glyph, fg, bg].
+// and never emit the full block. Each returns [glyph, fg, bg].
+// `mask` is four booleans (UL UR LL LR; true = fg); `corner` is UL/UR/LL/LR.
+function quadGlyph(mask, fg, bg, canonical) {
+  let m = mask, f = fg, b = bg;
+  const sum = m.reduce((s, x) => s + (x ? 1 : 0), 0);
+  if (canonical && (sum > 2 || (sum === 2 && !m[0]))) { m = m.map((x) => !x); f = bg; b = fg; }
+  return [MASK2GLYPH[maskKey(m)], f, b];
+}
+function triGlyph(corner, fg, bg, canonical) {
+  let c = corner, f = fg, b = bg;
+  if (canonical && c === "LR") { c = "UL"; f = bg; b = fg; }                  // ◢(F,B) == ◤(B,F)
+  else if (canonical && c === "LL") { c = "UR"; f = bg; b = fg; }             // ◣(F,B) == ◥(B,F)
+  return [TRI2GLYPH[c], f, b];
+}
 function toGlyph(cell, canonical) {
   const { kind, fg, bg } = cell;
   if (cell.diag)                                                              // accent stroke over a solid
     return [cell.diag.dir === "\\" ? "╲" : "╱", cell.diag.color, cell.data[0] ? fg : bg];
-  if (kind === "Q") {
-    let mask = cell.data, f = fg, b = bg;
-    const sum = mask.reduce((s, x) => s + (x ? 1 : 0), 0);
-    if (canonical && (sum > 2 || (sum === 2 && !mask[0]))) { mask = mask.map((x) => !x); f = bg; b = fg; }
-    return [MASK2GLYPH[maskKey(mask)], f, b];
+  if (kind === "Q") return quadGlyph(cell.data, fg, bg, canonical);
+  return triGlyph(cell.data, fg, bg, canonical);
+}
+
+// One cell rasterised to an n*n grid of [glyph, fg, bg] (n>=1). At n=1 this is just
+// toGlyph; for larger n we sample the cell's geometry across the block. Q colour
+// boundaries are axis-aligned so each character still resolves to a single quadrant
+// glyph; a T tile keeps a crisp diagonal (triangle glyph on the cells the split passes
+// through, solid either side); a diagonal accent runs its line glyph corner-to-corner.
+const solidGlyph = (col) => [" ", col, col];                                  // space shows bg only
+const qFg = (cell, u, v) => !!cell.data[(u < 0.5 ? 0 : 1) + (v < 0.5 ? 0 : 2)];
+const tFg = { UL: (x, y) => x + y < 1, UR: (x, y) => x > y, LL: (x, y) => x < y, LR: (x, y) => x + y > 1 };
+function tileGlyphs(cell, n, canonical) {
+  if (n <= 1) return [[toGlyph(cell, canonical)]];
+  const { kind, fg, bg } = cell;
+  const grid = Array.from({ length: n }, () => Array(n));
+  if (cell.diag) {                                                            // thin accent over a solid base
+    const base = cell.data[0] ? fg : bg, line = cell.diag.dir === "\\" ? "╲" : "╱";
+    const onLine = cell.diag.dir === "\\" ? (i, j) => i === j : (i, j) => i + j === n - 1;
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++)
+      grid[j][i] = onLine(i, j) ? [line, cell.diag.color, base] : solidGlyph(base);
+    return grid;
   }
-  let corner = cell.data, f = fg, b = bg;
-  if (canonical && corner === "LR") { corner = "UL"; f = bg; b = fg; }       // ◢(F,B) == ◤(B,F)
-  else if (canonical && corner === "LL") { corner = "UR"; f = bg; b = fg; }  // ◣(F,B) == ◥(B,F)
-  return [TRI2GLYPH[corner], f, b];
+  if (kind === "Q") {
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++)                   // sample the four quadrant centres
+      grid[j][i] = quadGlyph([qFg(cell, (i + .25) / n, (j + .25) / n), qFg(cell, (i + .75) / n, (j + .25) / n),
+                              qFg(cell, (i + .25) / n, (j + .75) / n), qFg(cell, (i + .75) / n, (j + .75) / n)],
+                             fg, bg, canonical);
+    return grid;
+  }
+  const D = cell.data, side = tFg[D];                                        // T: the split runs corner-to-corner
+  const onSplit = (D === "UL" || D === "LR") ? (i, j) => i + j === n - 1 : (i, j) => i === j;
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++)
+    grid[j][i] = onSplit(i, j) ? triGlyph(D, fg, bg, canonical)
+      : solidGlyph(side((i + .5) / n, (j + .5) / n) ? fg : bg);
+  return grid;
 }
 
 const ESC = "\x1b", RESET = "\x1b[0m";
@@ -226,21 +265,26 @@ function sgr(fg, bg, mode) {
   return `${ESC}[38;2;${fg[0]};${fg[1]};${fg[2]};48;2;${bg[0]};${bg[1]};${bg[2]}m`;
 }
 
-/** Two lines of ANSI-coloured block glyphs for `text`.
- *  opts: { recolor = true, mode = "truecolor" | "256", canonical = true }. */
+/** ANSI-coloured block glyphs for `text` — 2*GH lines tall by default.
+ *  opts: { recolor = true, mode = "truecolor" | "256", canonical = true, scale = 1 }.
+ *  scale > 1 blows every tile up into a scale*scale block of characters. */
 export function agenticonAnsi(text, opts = {}) {
   const recolor = opts.recolor !== false;
   const mode = opts.mode === "256" ? "256" : "truecolor";
   const canonical = opts.canonical !== false;
+  const n = Math.max(1, Math.floor(opts.scale || 1));
   const cells = cellsFor(text, recolor);
   const lines = [];
   for (let r = 0; r < GH; r++) {
-    let line = "";
-    for (let c = 0; c < GW; c++) {
-      const [g, f, b] = toGlyph(cells[r][c], canonical);
-      line += sgr(f, b, mode) + g;
+    const blocks = cells[r].map((cell) => tileGlyphs(cell, n, canonical));    // one n*n block per cell
+    for (let sj = 0; sj < n; sj++) {
+      let line = "";
+      for (let c = 0; c < GW; c++) for (let si = 0; si < n; si++) {
+        const [g, f, b] = blocks[c][sj][si];
+        line += sgr(f, b, mode) + g;
+      }
+      lines.push(line + RESET);
     }
-    lines.push(line + RESET);
   }
   return lines.join("\n");
 }

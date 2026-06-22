@@ -20,7 +20,8 @@
   },
   "scripts": {
     "gallery": "node bin/agenticon.js --gallery",
-    "analyze": "node scripts/analyze.mjs"
+    "analyze": "node scripts/analyze.mjs",
+    "serve": "node scripts/serve.mjs"
   },
   "keywords": [
     "identicon",

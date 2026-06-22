@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agenticon · playground</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #15171c; color: #d7dae0;
+    font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 22px 26px 6px; }
+  h1 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: .2px; }
+  h1 small { color: #7e8694; font-weight: 400; margin-left: 8px; }
+  .wrap { padding: 14px 26px 40px; }
+  .panel { display: flex; flex-wrap: wrap; gap: 16px 22px; align-items: flex-end;
+    background: #1c1f26; border: 1px solid #2a2e37; border-radius: 12px; padding: 16px 18px; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field > label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #828b99; }
+  input[type=text], input[type=number] { background: #11131a; border: 1px solid #333845; color: #e7eaf0;
+    border-radius: 8px; padding: 8px 10px; font: inherit; }
+  input[type=text] { width: 200px; }
+  input[type=number] { width: 84px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  button { background: #2a2f3a; border: 1px solid #3a4150; color: #e7eaf0; border-radius: 8px;
+    padding: 8px 12px; font: inherit; cursor: pointer; }
+  button:hover { background: #333a47; }
+  button.go { background: #3b6ea5; border-color: #4d83bf; }
+  button.go:hover { background: #4378b0; }
+  .seg { display: inline-flex; border: 1px solid #3a4150; border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; border-right: 1px solid #3a4150; }
+  .seg button:last-child { border-right: 0; }
+  .check { display: flex; align-items: center; gap: 7px; color: #c2c8d2; user-select: none; cursor: pointer; }
+  .stage { margin-top: 22px; display: flex; gap: 26px; align-items: flex-start; flex-wrap: wrap; }
+  .preview { background:
+      linear-gradient(45deg,#202530 25%,transparent 25%),
+      linear-gradient(-45deg,#202530 25%,transparent 25%),
+      linear-gradient(45deg,transparent 75%,#202530 75%),
+      linear-gradient(-45deg,transparent 75%,#202530 75%);
+    background-size: 18px 18px; background-position: 0 0,0 9px,9px -9px,-9px 0;
+    background-color: #1a1d24; border: 1px solid #2a2e37; border-radius: 14px; padding: 22px; }
+  .meta { color: #828b99; font-size: 12px; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .meta b { color: #d7dae0; font-weight: 600; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .7px; color: #828b99; margin: 34px 0 12px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 16px; }
+  figure { margin: 0; }
+  figure svg { display: block; border-radius: 8px; }
+  figcaption { text-align: center; margin-top: 6px; color: #7e8694; font-size: 11px;
+    max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hint { color: #6b7280; font-size: 12px; margin-left: auto; align-self: center; max-width: 320px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>agenticon <small>playground</small></h1>
+</header>
+
+<div class="wrap">
+  <div class="panel">
+    <div class="field">
+      <label>seed</label>
+      <div class="row">
+        <input id="seed" type="text" value="hello@example.com" autocomplete="off" spellcheck="false">
+        <button id="rand">Random</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>width</label>
+      <input id="w" type="number" min="16" max="2000" step="1" value="320">
+    </div>
+    <div class="field">
+      <label>height</label>
+      <input id="h" type="number" min="16" max="2000" step="1" value="320">
+    </div>
+    <label class="check" title="keep the width:height ratio when changing one">
+      <input id="lock" type="checkbox"> lock ratio
+    </label>
+
+    <div class="field">
+      <label>aspect preset</label>
+      <div class="seg">
+        <button data-preset="square" title="1:1">Square</button>
+        <button data-preset="terminal" title="4×2 grid with square cells = 2:1 (wider than tall)">Terminal</button>
+      </div>
+    </div>
+
+    <label class="check"><input id="recolor" type="checkbox" checked> recolor</label>
+
+    <div class="hint">Terminal = the 4×2 grid drawn with square cells (2:1). A real terminal is near-square because
+      monospace glyphs are ~2× taller than wide.</div>
+  </div>
+
+  <div class="stage">
+    <div>
+      <div class="preview" id="stage"></div>
+      <div class="meta" id="meta"></div>
+    </div>
+  </div>
+
+  <h2>random sampler <button id="resample" style="margin-left:8px">↻ new batch</button></h2>
+  <div class="grid" id="gallery"></div>
+</div>
+
+<script type="module">
+import { agenticon } from "./src/index.js";
+
+const $ = (id) => document.getElementById(id);
+const seedEl = $("seed"), wEl = $("w"), hEl = $("h"), lockEl = $("lock"), recolorEl = $("recolor");
+const stage = $("stage"), meta = $("meta"), gallery = $("gallery");
+
+const randSeed = () => Math.random().toString(36).slice(2, 8);
+
+// Square SVG stretched to w×h (preserveAspectRatio=none lets the square viewBox fill any box).
+function icon(seed, w, h) {
+  const tmp = document.createElement("div");
+  tmp.innerHTML = agenticon(seed, { size: 100, recolor: recolorEl.checked });
+  const svg = tmp.firstElementChild;
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+  svg.setAttribute("preserveAspectRatio", "none");
+  return svg;
+}
+
+function draw() {
+  const w = Math.max(16, +wEl.value || 16), h = Math.max(16, +hEl.value || 16);
+  stage.replaceChildren(icon(seedEl.value, w, h));
+  meta.innerHTML = `<b>${seedEl.value || "(empty)"}</b> · ${w}×${h} · ratio ${(w / h).toFixed(2)}:1`;
+}
+
+// the sampler keeps its seeds; only "new batch" re-randomises. Thumbnails track the current aspect.
+let seeds = Array.from({ length: 18 }, randSeed);
+function renderGallery() {
+  const w = Math.max(16, +wEl.value || 16), h = Math.max(16, +hEl.value || 16);
+  const gh = 132, gw = Math.round(gh * (w / h));
+  const frag = document.createDocumentFragment();
+  for (const seed of seeds) {
+    const fig = document.createElement("figure");
+    const svg = icon(seed, gw, gh);
+    svg.style.cursor = "pointer"; svg.title = "load into preview";
+    svg.onclick = () => { seedEl.value = seed; draw(); };
+    const cap = document.createElement("figcaption"); cap.textContent = seed;
+    fig.append(svg, cap);
+    frag.append(fig);
+  }
+  gallery.replaceChildren(frag);
+}
+const redraw = () => { draw(); renderGallery(); };
+
+// ratio lock
+let ratio = +wEl.value / +hEl.value;
+const syncRatio = () => { ratio = (+wEl.value || 1) / (+hEl.value || 1); };
+wEl.addEventListener("input", () => { if (lockEl.checked) hEl.value = Math.max(16, Math.round(+wEl.value / ratio)); redraw(); });
+hEl.addEventListener("input", () => { if (lockEl.checked) wEl.value = Math.max(16, Math.round(+hEl.value * ratio)); redraw(); });
+lockEl.addEventListener("change", syncRatio);
+
+// presets keep width, set height
+for (const b of document.querySelectorAll("[data-preset]")) b.addEventListener("click", () => {
+  const w = +wEl.value || 320;
+  hEl.value = b.dataset.preset === "terminal" ? Math.round(w / 2) : w;
+  syncRatio(); redraw();
+});
+
+seedEl.addEventListener("input", draw);
+recolorEl.addEventListener("change", redraw);
+$("rand").addEventListener("click", () => { seedEl.value = randSeed(); draw(); });
+$("resample").addEventListener("click", () => { seeds = Array.from({ length: 18 }, randSeed); renderGallery(); });
+
+draw();
+renderGallery();
+</script>
+</body>
+</html>

@@ -10,12 +10,32 @@ reproducible measurement of any of the numbers here run `npm run analyze`.
 RNG (`makeRng` = cyrb128 → sfc32). One generator feeds both renderers:
 
 ```
-text ─▶ generate() ─▶ cells[row][col]  ─▶ renderCell  ─▶ SVG   (agenticon / agenticonDataURI)
-                          │  (+ optional recolour)     └▶ toGlyph ─▶ ANSI (agenticonAnsi)
+text ─▶ generate() ─▶ cells[row][col]  ─▶ faceGroups ─▶ SVG   (agenticon / agenticonDataURI)
+                          │  (+ optional recolour)    └▶ toGlyph ─▶ ANSI (agenticonAnsi)
 ```
 
-SVG and terminal differ only in the final per-cell drawing; `generate` and the
-recolour pass are shared (`src/render.js → cellsFor`).
+SVG and terminal differ only in the final drawing; `generate` and the recolour
+pass are shared (`src/render.js → cellsFor`).
+
+### SVG: one path per colour (seamless at any scale)
+
+The naive renderer drew a rect/triangle per cell. Abutting **antialiased** fills
+*conflate*: at a shared edge the rasteriser composites them in sequence and each
+contributes <100 % coverage, so a sliver of whatever is behind leaks through — a
+1px seam that appears whenever the icon is displayed at a fractional scale (the
+common case on a web page). `crispEdges` avoids it but snaps each shape to the
+device grid independently (gaps) and kills the diagonals' antialiasing.
+
+So the SVG renderer works from **vertices, not cells**. `faceGroups` decomposes the
+grid into polygon faces on an 8×4 unit lattice (a Q cell → four unit squares, a T
+cell → two triangles), keyed by colour. Each colour is then emitted as **one
+`<path>`** holding all its faces as subpaths. A single path fills in one
+antialiasing pass, so adjacent same-colour faces become a seamless union with no
+internal edges to conflate — and because the algorithm matches colours across
+seams, *most* boundaries are same-colour and simply vanish. The few genuine
+colour boundaries that remain are underlaid by a full-canvas rect of the dominant
+colour, so a conflation sliver there shows that colour, never the page. Accent
+strokes draw last, on top. No overlap, no pixel-snapping, no fudge.
 
 ## The grid and the tiles
 
@@ -71,6 +91,40 @@ re-place the neighbour, cascade if needed. It converges in **≤2 iterations**
 (observed) and ends orphan-free. Repair must stay **unforced** (no diagonal
 force) — forcing inside repair can stop it converging.
 
+### Diagonal accents (post-pass)
+
+Once the grid is settled, `addDiagonals` decorates some solid tiles. The 4×2 grid has a
+5×3 lattice of vertices; only **3** sit off the icon's border — the mid-grid points on the
+horizontal centre line (columns 1–3). Each solid tile touches 1 or 2 of them (a top-row
+tile's bottom corners, a bottom-row tile's top corners). For each solid, with probability
+`DIAG_PROB` (0.5), pick one of its interior-vertex corners and draw a `╱`/`╲` stroke from
+that vertex across the tile to the opposite corner, in a colour **borrowed from a neighbour
+meeting at the vertex** (the corner-quarter colours of the other ≤3 cells there, minus the
+tile's own colour).
+
+Three things disqualify a candidate, so the realised rate is well under half the solids
+(~0.7 accents/icon):
+
+- **Colour-isolated solids are skipped.** A solid is self-supporting, so it can be a lone
+  island of its colour; such a tile gets no accent. Eligibility requires at least one
+  edge-neighbour that shares the tile's colour across their seam.
+- **One line per vertex.** A vertex that already carries a line is off-limits to every other
+  tile (the pass tracks claimed vertices in a `used` set, scanned left-to-right top-to-bottom).
+  A tile whose pick is taken simply falls back to its other interior vertex, if it has one.
+- **No borrowable colour.** If every neighbour at a candidate vertex matches the tile's own
+  colour, there is nothing to draw with, and that vertex is dropped.
+
+It is a pure overlay: it sets `cell.diag = { dir, color }` and never touches `kind/data/
+fg/bg`, so the tile structure — and every invariant below — is unchanged. The stroke draws
+as a round-capped `<line>` (SVG, width `DIAG_STROKE`×cell, ends centred on the vertex and the
+opposite corner) or a `╱`/`╲` glyph (terminal, accent fg over the solid bg). One stroke per
+tile by design (matching "╱ or ╲"); two never combine into a cross. The borrowed colour is a
+real cell colour, so the recolour remap carries it along.
+
+> A placed solid is a **shared** `SOLIDS` object reused across every icon, so the pass
+> *clones* the cell to attach `diag` — mutating in place would leak the accent into later
+> icons in the same process.
+
 ## Invariants (must always hold)
 
 - **No orphaned 1/4 squares.** Every subpixel touches a same-colour subpixel.
@@ -91,6 +145,8 @@ All in `src/generate.js` unless noted:
 | `FORCE_DIAG_TURN` | 2 | 0-based turn to force a diagonal (lower = more often/earlier; `-1`-style disable = remove the call) |
 | `MIN_CONTRAST` | 3.0 | min fg/bg contrast for two-colour tiles (lower = muddier tiles, fewer deadlocks) |
 | `KIND_W` | `{Q:.5, T:.32}` | Q-vs-T balance among the best-contiguity tiles |
+| `DIAG_PROB` | 0.5 | chance a solid tile gets a diagonal accent (0 = off) |
+| `DIAG_STROKE` | 0.05 | accent line width (SVG, round-capped), as a fraction of the cell's shorter side (`render.js`) |
 | recolour `N_WEIGHTS` | (`recolor.js`) | distribution of palette size (1–5 colours) |
 
 ## Recolour

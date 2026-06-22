@@ -30,11 +30,16 @@ over 10k icons (expect `orphaned 1/4 squares: 0` and `largest region ≤ 2.5`). 
   4-corner set — it double-counts and over-weights solids. This is why "3/4" is 0.
 - **Solids come only from the `SOLIDS` floor** (always legal, single-colour, bypass the
   contrast gate); they're the reason the legal set is never empty.
+- **Placed tiles are shared objects — never mutate one in place.** `pickLegal` returns
+  references straight out of the module-level `SOLIDS` array, so the same object lands in
+  many icons. The diagonal-accent pass (`addDiagonals`) *clones* before attaching `diag`;
+  mutating instead would leak the accent into later icons in the same process.
 
 ## Knobs (constants in `src/generate.js`)
 `AREA_LIMIT` (region cap) · `FORCE_DIAG_TURN` (which turn forces a diagonal) ·
-`MIN_CONTRAST` (in `palette.js`; two-colour tile contrast floor) · `KIND_W` (Q-vs-T mix).
-Changing any of these is an aesthetic call — re-run `npm run analyze` and re-render to check.
+`MIN_CONTRAST` (in `palette.js`; two-colour tile contrast floor) · `KIND_W` (Q-vs-T mix) ·
+`DIAG_PROB` (solid-tile diagonal-accent rate; 0 = off) · `DIAG_STROKE` (accent line width, in
+`render.js`). Changing any of these is an aesthetic call — re-run `npm run analyze` and re-render to check.
 
 ## Conventions
 - Match the existing terse, comment-light-but-pointed style in `src/`.

@@ -35,6 +35,8 @@ const INCELL = { 0: [1, 2], 1: [0, 3], 2: [0, 3], 3: [1, 2] };  // in-cell ortho
 const SUBPX_EDGES = { 0: [["N", 0], ["W", 0]], 1: [["N", 1], ["E", 0]], 2: [["S", 0], ["W", 1]], 3: [["S", 1], ["E", 1]] };
 const EDGE_DIR = { N: [0, -1], S: [0, 1], W: [-1, 0], E: [1, 0] };
 const AREA_LIMIT = 2.5;    // no contiguous colour region may exceed this many tiles (1 = one cell)
+const DIAG_PROB = 0.5;     // chance a solid tile gets a diagonal accent toward an interior vertex
+const TRI_BG = { UL: 3, UR: 2, LL: 1, LR: 0 };   // the one corner a triangle leaves as bg (0UL 1UR 2LL 3LR)
 
 function edgeColors(cell, edge) {
   const { kind, data, fg, bg } = cell;
@@ -207,6 +209,55 @@ function repair(start, cells, rng) {                           // ignore one nei
   }
 }
 
+function cornerColor(cell, i) {                                // colour of the quarter at corner i (0UL 1UR 2LL 3LR)
+  if (cell.kind === "Q") return cell.data[i] ? cell.fg : cell.bg;
+  return i === TRI_BG[cell.data] ? cell.bg : cell.fg;
+}
+const isSolid = (cell) =>                                      // renders as a single colour (only Q solids exist)
+  cell.kind === "Q" && [1, 2, 3].every((i) => ckey(cornerColor(cell, i)) === ckey(cornerColor(cell, 0)));
+
+function hasColorNbr(c, r, cells, key) {                       // an edge-neighbour sharing `key` across the seam
+  for (const [nc, nr, e] of neighbours(c, r)) {
+    const t = edgeColors(cells[nr][nc], OPP[e]);
+    if (ckey(t[0]) === key || ckey(t[1]) === key) return true;
+  }
+  return false;
+}
+
+// After the grid is settled, give some solid tiles a diagonal accent: a slash from an interior
+// vertex (one of the 3 mid-grid points off the icon's border) across the tile to its opposite
+// corner, in a colour borrowed from a neighbour meeting at that vertex. Purely decorative -- it
+// only sets cell.diag, leaving the tile structure (and thus every invariant) untouched. Rules:
+// a solid in colour-isolation (no same-colour edge-neighbour) is skipped, and at most one line
+// may terminate at any vertex -- a tile whose pick is taken falls back to its other vertex.
+function addDiagonals(cells, rng) {
+  const used = new Set();                                      // interior vertices already claimed by a line
+  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) {
+    const cell = cells[r][c];
+    if (!isSolid(cell)) continue;
+    const self = ckey(cornerColor(cell, 0));
+    if (!hasColorNbr(c, r, cells, self)) continue;            // skip colour-isolated solids
+    const cands = [];                                          // [cornerIndex, vc, vr, candidate borrow-colours]
+    for (let i = 0; i < 4; i++) {
+      const vc = c + (i & 1), vr = r + (i >> 1);               // lattice point of corner i
+      if (!(vc > 0 && vc < GW && vr > 0 && vr < GH)) continue; // interior vertices only
+      if (used.has(vc * GH + vr)) continue;                   // a line already terminates here
+      const colors = [];
+      for (const [ac, ar, ai] of [[vc - 1, vr - 1, 3], [vc, vr - 1, 2], [vc - 1, vr, 1], [vc, vr, 0]]) {
+        if (ac === c && ar === r) continue;                   // skip the tile itself
+        const col = cornerColor(cells[ar][ac], ai);
+        if (ckey(col) !== self) colors.push(col);
+      }
+      if (colors.length) cands.push([i, vc, vr, colors]);
+    }
+    if (!cands.length || rng() >= DIAG_PROB) continue;
+    const [i, vc, vr, colors] = cands[Math.floor(rng() * cands.length)];
+    used.add(vc * GH + vr);
+    // clone, never mutate: a placed solid is a shared SOLIDS object reused across icons
+    cells[r][c] = { ...cell, diag: { dir: i === 0 || i === 3 ? "\\" : "/", color: colors[Math.floor(rng() * colors.length)] } };
+  }
+}
+
 /** text -> 2D array cells[row][col] of { kind, data, fg, bg } for the 4x2 grid. */
 export function generate(text) {
   const rng = makeRng(text);
@@ -219,5 +270,6 @@ export function generate(text) {
     if (hasLegal(c, r, cells)) cells[r][c] = pickLegal(c, r, cells, rng, turn === FORCE_DIAG_TURN);
     else repair([c, r], cells, rng);
   }
+  addDiagonals(cells, rng);
   return cells;
 }

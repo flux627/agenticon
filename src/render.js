@@ -11,36 +11,69 @@ function cellsFor(text, recolor) {
   let cells = generate(text);
   if (recolor) {
     const cmap = buildRecolorMap(text, cells);
-    cells = cells.map((row) => row.map((c) =>
-      ({ ...c, fg: cmap.get(ckey(c.fg)) || c.fg, bg: cmap.get(ckey(c.bg)) || c.bg })));
+    const m = (col) => cmap.get(ckey(col)) || col;
+    cells = cells.map((row) => row.map((c) => {
+      const nc = { ...c, fg: m(c.fg), bg: m(c.bg) };
+      if (c.diag) nc.diag = { ...c.diag, color: m(c.diag.color) };   // borrowed accent rides the remap too
+      return nc;
+    }));
   }
   return cells;
 }
 
 // ---- SVG ----
 const hex = (c) => "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
-function renderCell(cell, x, y, w, h) {
-  const { kind, data, fg, bg } = cell;
-  let s = `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${hex(bg)}" shape-rendering="crispEdges"/>`;
-  if (kind === "Q") {
-    const sub = [[x, y], [x + w / 2, y], [x, y + h / 2], [x + w / 2, y + h / 2]];
-    for (let i = 0; i < 4; i++) if (data[i])
-      s += `<rect x="${sub[i][0]}" y="${sub[i][1]}" width="${w / 2}" height="${h / 2}" fill="${hex(fg)}" shape-rendering="crispEdges"/>`;
-  } else {
-    const v = { UL: [[x, y], [x + w, y], [x, y + h]], UR: [[x, y], [x + w, y], [x + w, y + h]],
-                LL: [[x, y], [x, y + h], [x + w, y + h]], LR: [[x + w, y], [x, y + h], [x + w, y + h]] }[data];
-    s += `<polygon points="${v.map((p) => p.join(",")).join(" ")}" fill="${hex(fg)}"/>`;
+const DIAG_STROKE = 0.05;   // accent line width, as a fraction of the cell's shorter side
+
+// The icon as polygon faces on an 8x4 vertex grid (each cell spans 2x2 units): a Q cell is four
+// unit squares, a T cell two triangles. Faces are grouped by colour so each colour renders as a
+// SINGLE <path> -- one fill, one antialiasing pass -- which makes adjacent same-colour faces a
+// seamless union (no internal edges to conflate). Only genuine colour boundaries remain, and the
+// dominant colour underlays everything as a backdrop so those never expose the page.
+const shoelace = (p) => { let s = 0; for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length]; s += a[0] * b[1] - b[0] * a[1]; } return s / 2; };
+function faceGroups(cells) {
+  const groups = new Map();                                  // ckey -> { rgb, polys, area }
+  const add = (rgb, pts) => {
+    let g = groups.get(ckey(rgb));
+    if (!g) groups.set(ckey(rgb), (g = { rgb, polys: [], area: 0 }));
+    g.polys.push(pts); g.area += Math.abs(shoelace(pts));
+  };
+  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) {
+    const cell = cells[r][c], X = 2 * c, Y = 2 * r;
+    if (cell.kind === "Q") {
+      const o = [[X, Y], [X + 1, Y], [X, Y + 1], [X + 1, Y + 1]];   // UL UR LL LR origins
+      for (let i = 0; i < 4; i++) { const [a, b] = o[i];
+        add(cell.data[i] ? cell.fg : cell.bg, [[a, b], [a + 1, b], [a + 1, b + 1], [a, b + 1]]); }
+    } else {
+      const TL = [X, Y], TR = [X + 2, Y], BL = [X, Y + 2], BR = [X + 2, Y + 2];
+      const [ft, bt] = { UL: [[TL, TR, BL], [TR, BR, BL]], UR: [[TL, TR, BR], [TL, BR, BL]],
+                         LL: [[TL, BL, BR], [TL, TR, BR]], LR: [[TR, BL, BR], [TL, TR, BL]] }[cell.data];
+      add(cell.fg, ft); add(cell.bg, bt);
+    }
   }
-  return s;
+  return [...groups.values()];
 }
 
 /** SVG string for `text`. opts: { size = 64, recolor = true }. */
 export function agenticon(text, opts = {}) {
   const size = opts.size || 64;
   const cells = cellsFor(text, opts.recolor !== false);
-  const cw = size / GW, ch = size / GH;
-  let body = "";
-  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) body += renderCell(cells[r][c], c * cw, r * ch, cw, ch);
+  const sx = size / (GW * 2), sy = size / (GH * 2);          // unit-grid -> px
+  const groups = faceGroups(cells);
+  const bg = groups.reduce((a, b) => (b.area > a.area ? b : a));   // dominant colour = backdrop
+  let body = `<rect width="${size}" height="${size}" fill="${hex(bg.rgb)}"/>`;
+  for (const g of groups) {
+    if (g === bg) continue;
+    const d = g.polys.map((p) => "M" + p.map(([x, y]) => `${x * sx} ${y * sy}`).join("L") + "Z").join("");
+    body += `<path d="${d}" fill="${hex(g.rgb)}"/>`;
+  }
+  const cw = size / GW, ch = size / GH;                       // accent strokes ride on top
+  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) {
+    const cell = cells[r][c]; if (!cell.diag) continue;
+    const x = c * cw, y = r * ch;
+    const [x1, y1, x2, y2] = cell.diag.dir === "\\" ? [x, y, x + cw, y + ch] : [x, y + ch, x + cw, y];
+    body += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${hex(cell.diag.color)}" stroke-width="${Math.min(cw, ch) * DIAG_STROKE}" stroke-linecap="round"/>`;
+  }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${body}</svg>`;
 }
 
@@ -63,6 +96,8 @@ const maskKey = (data) => data.map((b) => (b ? 1 : 0)).join("");
 // and never emit the full block. Returns [glyph, fg, bg].
 function toGlyph(cell, canonical) {
   const { kind, fg, bg } = cell;
+  if (cell.diag)                                                              // accent stroke over a solid
+    return [cell.diag.dir === "\\" ? "╲" : "╱", cell.diag.color, cell.data[0] ? fg : bg];
   if (kind === "Q") {
     let mask = cell.data, f = fg, b = bg;
     const sum = mask.reduce((s, x) => s + (x ? 1 : 0), 0);

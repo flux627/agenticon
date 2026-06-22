@@ -154,9 +154,11 @@ export function agenticon(text, opts = {}) {
     else if (ccLine === key) ss = sCC;                         // B: above target on its line side -> upper
     else if (nbDiag === key && nbLine === hostKey) ss = -sCC;  // C: neighbour target on diagonal side, base on line side
     else if (ccDiag === key && ccLine === hostKey) ss = sCC;   // D: above target on diagonal side, base on line side
-    else if (dNeigh) ss = -sCC;                                // E: diagonal target on neighbour side -> underside
-    else if (dAbove) ss = sCC;                                 // F: diagonal target on above side -> upper
-    else ss = 0;                                               // G: centre
+    else if (dNeigh && !dAbove) ss = -sCC;                     // E: diagonal target on neighbour side only -> underside
+    else if (dAbove && !dNeigh) ss = sCC;                      // F: diagonal target on above side only -> upper
+    else if (nbLine === hostKey && nbDiag === hostKey) ss = -sCC;   // G: neighbour vertex all base -> underside
+    else if (ccLine === hostKey && ccDiag === hostKey) ss = sCC;    // H: above vertex all base -> upper
+    else ss = 0;                                               // I: centre (incl. a full-target diagonal -> straight through)
     const s = ss * rad;
     const aox = O[0] - ux * ch + nx * s, aoy = O[1] - uy * ch + ny * s;   // run-off end, pushed past the border
     const avx = V[0] + ux * L + nx * s, avy = V[1] + uy * L + ny * s;     // run past V; matching colour consumes it

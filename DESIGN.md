@@ -133,9 +133,11 @@ with the host's row. For `CC`/`NB` the corner reads as a *line-side* half (towar
 2. `CC` line-side is target → lean to the cross-centre tile (upper side).
 3. `NB` diagonal-side is target *and* its line-side is base → underside.
 4. `CC` diagonal-side is target *and* its line-side is base → upper side.
-5. diagonal tile carries target on its neighbour side → underside.
-6. diagonal tile carries target on its above side → upper side.
-7. otherwise → centred.
+5. diagonal tile carries target on its neighbour side *only* (not the above side) → underside.
+6. diagonal tile carries target on its above side *only* → upper side.
+7. `NB` vertex is all base colour → underside.
+8. `CC` vertex is all base colour → upper side.
+9. otherwise → centred — including a **full-target** diagonal (target on both sides), which runs straight through.
 
 The vertex reads come from sampling `colorAt` a hair off `V` into each corner. In the terminal the
 accent stays a single `╱`/`╲` glyph (accent fg over the solid bg) — the merge/side geometry is

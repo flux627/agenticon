@@ -64,6 +64,37 @@ function faceGroups(cells) {
   return [...groups.values()];
 }
 
+// One cell's faces as { color, poly (px) } -- four subpixels (Q) or two triangles (T).
+function cellFaces(cell, x, y, cw, ch) {
+  if (cell.kind === "Q") {
+    const o = [[x, y], [x + cw / 2, y], [x, y + ch / 2], [x + cw / 2, y + ch / 2]];
+    return o.map(([px, py], i) => ({ color: cell.data[i] ? cell.fg : cell.bg,
+      poly: [[px, py], [px + cw / 2, py], [px + cw / 2, py + ch / 2], [px, py + ch / 2]] }));
+  }
+  const TL = [x, y], TR = [x + cw, y], BL = [x, y + ch], BR = [x + cw, y + ch];
+  const [ft, bt] = { UL: [[TL, TR, BL], [TR, BR, BL]], UR: [[TL, TR, BR], [TL, BR, BL]],
+                     LL: [[TL, BL, BR], [TL, TR, BR]], LR: [[TR, BL, BR], [TL, TR, BL]] }[cell.data];
+  return [{ color: cell.fg, poly: ft }, { color: cell.bg, poly: bt }];
+}
+// Underlying colour at a pixel (ignores accents).
+function colorAt(cells, px, py, cw, ch) {
+  const gc = Math.min(GW - 1, Math.max(0, Math.floor(px / cw))), gr = Math.min(GH - 1, Math.max(0, Math.floor(py / ch)));
+  const cell = cells[gr][gc], lx = (px - gc * cw) / cw, ly = (py - gr * ch) / ch;
+  if (cell.kind === "Q") { const i = (lx < .5 ? 0 : 1) + (ly < .5 ? 0 : 2); return cell.data[i] ? cell.fg : cell.bg; }
+  const fg = { UL: lx + ly < 1, UR: lx > ly, LL: lx < ly, LR: lx + ly > 1 }[cell.data]; return fg ? cell.fg : cell.bg;
+}
+// Clip a polygon to a convex one (inside side taken from its centroid, so winding doesn't matter).
+function clipConvex(poly, clip) {
+  let out = poly;
+  const cx = clip.reduce((s, p) => s + p[0], 0) / clip.length, cy = clip.reduce((s, p) => s + p[1], 0) / clip.length;
+  for (let i = 0; i < clip.length && out.length; i++) {
+    const a = clip[i], b = clip[(i + 1) % clip.length], cr = (p) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+    const sgn = cr([cx, cy]) >= 0 ? 1 : -1;
+    out = clipHalf(out, (p) => -sgn * cr(p));
+  }
+  return out;
+}
+
 /** SVG string for `text`. opts: { size = 64, recolor = true }. */
 export function agenticon(text, opts = {}) {
   const size = opts.size || 64;
@@ -77,44 +108,63 @@ export function agenticon(text, opts = {}) {
     const d = g.polys.map((p) => "M" + p.map(([x, y]) => `${x * sx} ${y * sy}`).join("L") + "Z").join("");
     body += `<path d="${d}" fill="${hex(g.rgb)}"/>`;
   }
-  // Accent strokes ride on top. The stroke is the borrowed colour leaking out of the vertex V into
-  // the host tile, so its vertex end has to land *on* the matching colour. STRAIGHT (off=null): the
-  // colour is straight across V, so the band tapers to a point at V (it meets that colour there) and
-  // to a point at the far corner O. OFFSET (off=[dx,dy]): the colour is in a side tile, so the band
-  // is shifted perpendicular toward that side and run past V across the bordering edge, where it is
-  // consumed by the matching colour; it's clipped to host+neighbour so it can't spill elsewhere.
+  // Accents ride on top: the borrowed colour leaking out of the vertex V into the host along its bisecting diagonal.
+  // The band runs from the border end O, through the host, past V, and is clipped to three things: the host cell; every
+  // accent-colour face (where it dissolves in invisibly, so the line merges into the matching shape and is cut only at a
+  // foreign colour); and host-colour faces in EDGE-adjacent tiles only (a short poke that fills the pinch at V without
+  // nubbing into the diagonal tile across V). Which side of the diagonal it leans onto is decided per-vertex below. All
+  // pieces go in one <path> so the host-side and merged-side fuse seamlessly; the O end runs off the border (no chop).
   const cw = size / GW, ch = size / GH, rad = Math.min(cw, ch) * DIAG_STROKE / 2;
-  const taper = 2 * rad * Math.max(cw, ch) / Math.min(cw, ch);
   for (let gr = 0; gr < GH; gr++) for (let gc = 0; gc < GW; gc++) {
     const cell = cells[gr][gc]; if (!cell.diag) continue;
-    const { dir, color, off } = cell.diag, x = gc * cw, y = gr * ch;
+    const dir = cell.diag.dir, color = cell.diag.color;
+    const x = gc * cw, y = gr * ch, key = ckey(color);
+    const hostKey = ckey(cellFaces(cell, x, y, cw, ch)[0].color);   // host's own colour
     const TL = [x, y], TR = [x + cw, y], BL = [x, y + ch], BR = [x + cw, y + ch];
     const [V, O] = dir === "\\" ? (gr === 0 ? [BR, TL] : [TL, BR]) : (gr === 0 ? [BL, TR] : [TR, BL]);
-    const L = Math.hypot(V[0] - O[0], V[1] - O[1]), d = [(V[0] - O[0]) / L, (V[1] - O[1]) / L];   // O -> V
-    const q = [-d[1] * rad, d[0] * rad];                       // perpendicular half-width
-    const tx = d[0] * taper, ty = d[1] * taper;
-    let pts;
-    // O is always on the icon's top/bottom border, so that end runs off the icon: extend it past O
-    // (away from V) and let the clip / viewport cut it along the border -- no taper, no chop.
-    const eo = ch, ox = O[0] - d[0] * eo, oy = O[1] - d[1] * eo;
-    if (!off) {
-      // straight: a full-width band that runs through V and past it into the diagonally-opposite
-      // tile (same colour), where its end is consumed -- no taper either side.
-      const ex = V[0] + d[0] * taper, ey = V[1] + d[1] * taper;   // flat end pushed past V into the origin
-      pts = [[ox + q[0], oy + q[1]], [ex + q[0], ey + q[1]], [ex - q[0], ey - q[1]], [ox - q[0], oy - q[1]]];
-    } else {
-      // The band sits entirely on the colour side of the diagonal: its trailing edge IS the
-      // diagonal (through V and O) -- a perpendicular shift of exactly the half-width -- so it can't
-      // spill into the far (non-matching) tile. Full width `2*rad` perpendicular; near V the leading
-      // edge crosses the bordering edge into the matching colour and is consumed there. The crossing
-      // length up the edge is 2*rad/sin(angle), which falls out of the geometry -- no magic constant.
-      let n = [-d[1], d[0]];                                   // perpendicular toward the colour side
-      if (n[0] * off[0] + n[1] * off[1] < 0) n = [d[1], -d[0]];
-      const w = 2 * rad;                                      // clean parallelogram (the "rectangle"):
-      pts = [[ox, oy], V, [V[0] + n[0] * w, V[1] + n[1] * w],  // one side IS the diagonal (O->V, bisects tile);
-             [ox + n[0] * w, oy + n[1] * w]];                  // the opposite side rides at +w, into the colour
+    const all = [], hostFaces = [];                            // band paints accent colour (it dissolves in, invisibly)
+    for (let ar = 0; ar < GH; ar++) for (let ac = 0; ac < GW; ac++) {   // or host colour -- but host colour ONLY in cells
+      if (ac === gc && ar === gr) continue;                    // that share an EDGE with the host, so the poke is a short
+      const edgeAdj = Math.abs(ac - gc) + Math.abs(ar - gr) === 1;      // transversal wedge filling the pinch at V, never
+      for (const f of cellFaces(cells[ar][ac], ac * cw, ar * ch, cw, ch)) {   // a nub hanging into the diagonal tile
+        const fk = ckey(f.color);
+        if (fk === key) all.push(f.poly);
+        else if (fk === hostKey && edgeAdj) hostFaces.push(f.poly);
+      }
     }
-    if (pts.length > 2) body += `<polygon points="${pts.map((p) => `${p[0]} ${p[1]}`).join(" ")}" fill="${hex(color)}"/>`;
+    const L = Math.hypot(V[0] - O[0], V[1] - O[1]), ux = (V[0] - O[0]) / L, uy = (V[1] - O[1]) / L;
+    const nx = -uy, ny = ux;
+    // Side selection from the geometry at V. Three tiles meet the host there: the diagonal tile (across V), the
+    // cross-centre tile (CC, shares the host's centre-line edge -- the "above" tile) and the neighbour (NB, shares the
+    // host's side edge). sCC fixes "toward CC" as +1/-1 (flips with the host's row). For CC and NB the corner reads as a
+    // line-side half (toward the host) and a diagonal-side half (toward the diagonal tile); the diagonal tile's corner
+    // reads as an above-side (+sCC) and neighbour-side (-sCC) half. Lean to connect the band to the target colour.
+    const vc = Math.round(V[0] / cw), oc = 2 * vc - 1 - gc;    // the other column meeting at V
+    const CC = [gc, 1 - gr], NB = [oc, gr], Dt = [oc, 1 - gr], eps = 0.06 * Math.min(cw, ch);
+    const sCC = ((CC[0] + 0.5) * cw - V[0]) * nx + ((CC[1] + 0.5) * ch - V[1]) * ny >= 0 ? 1 : -1;
+    const at = (dx, dy) => { const m = Math.hypot(dx, dy); return ckey(colorAt(cells, V[0] + eps * dx / m, V[1] + eps * dy / m, cw, ch)); };
+    const edge = (ac, ar) => [Math.sign((ac + 0.5) * cw - V[0]) || 1, Math.sign((ar + 0.5) * ch - V[1]) || 1];
+    const [nsx, nsy] = edge(NB[0], NB[1]), nbLine = at(nsx * 0.2, nsy), nbDiag = at(nsx, nsy * 0.2);   // NB: line=vertical edge
+    const [csx, csy] = edge(CC[0], CC[1]), ccLine = at(csx, csy * 0.2), ccDiag = at(csx * 0.2, csy);   // CC: line=horizontal edge
+    const [dsx, dsy] = edge(Dt[0], Dt[1]); let dAbove = false, dNeigh = false;
+    for (const th of [15, 30, 45, 60, 75]) { const r = th * Math.PI / 180, dx = dsx * Math.cos(r), dy = dsy * Math.sin(r);
+      if (at(dx, dy) === key) { if ((dx * nx + dy * ny) * sCC > 0) dAbove = true; else dNeigh = true; } }
+    let ss;
+    if (nbLine === key) ss = -sCC;                             // A: neighbour target on its line side -> underside
+    else if (ccLine === key) ss = sCC;                         // B: above target on its line side -> upper
+    else if (nbDiag === key && nbLine === hostKey) ss = -sCC;  // C: neighbour target on diagonal side, base on line side
+    else if (ccDiag === key && ccLine === hostKey) ss = sCC;   // D: above target on diagonal side, base on line side
+    else if (dNeigh) ss = -sCC;                                // E: diagonal target on neighbour side -> underside
+    else if (dAbove) ss = sCC;                                 // F: diagonal target on above side -> upper
+    else ss = 0;                                               // G: centre
+    const s = ss * rad;
+    const aox = O[0] - ux * ch + nx * s, aoy = O[1] - uy * ch + ny * s;   // run-off end, pushed past the border
+    const avx = V[0] + ux * L + nx * s, avy = V[1] + uy * L + ny * s;     // run past V; matching colour consumes it
+    const band = [[aox + nx * rad, aoy + ny * rad], [avx + nx * rad, avy + ny * rad],
+                  [avx - nx * rad, avy - ny * rad], [aox - nx * rad, aoy - ny * rad]];
+    const pieces = [clipConvex(band, [TL, TR, BR, BL]),
+      ...all.map((f) => clipConvex(band, f)), ...hostFaces.map((f) => clipConvex(band, f))].filter((p) => p.length > 2);
+    if (pieces.length) body += `<path d="${pieces.map((p) => "M" + p.map((qq) => `${qq[0]} ${qq[1]}`).join("L") + "Z").join("")}" fill="${hex(color)}"/>`;
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${body}</svg>`;
 }

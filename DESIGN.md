@@ -108,29 +108,38 @@ a line drawn on top. Three things disqualify a candidate (realised rate ~0.7 acc
   displaced tile falls back to its other interior vertex.
 - **No borrowable colour** — if every neighbour at the vertex matches the host, drop it.
 
-**Where the accent merges (`generate`).** The colour and the connection are chosen so the
-vertex end lands *on* a matching tile and is consumed there:
+`generate` only records `cell.diag = { dir, color }` — the borrowed colour, preferring the
+diagonally-opposite tile. It never touches `kind/data/fg/bg`, so the tile structure (and every
+invariant below) is unchanged. Everything about *how the accent connects* is decided by the
+**renderer** from the geometry at the vertex.
 
-- The **diagonally-opposite** tile is preferred (the accent runs *straight through* the vertex
-  into it). If that tile is solid, the band stays centred on the diagonal; if its matching
-  colour is only a triangle half (or partial), the band shifts to the side where that half's
-  **centroid** sits, so it rides the matching half and not the boundary. This side comes purely
-  from the opposite tile's geometry — the perpendicular tiles' colours are irrelevant.
-- Otherwise the colour comes from a **side** tile, and `off = [dx,dy]` records which edge to
-  cross. The far (always-border) corner runs off the icon edge.
+**How it draws (`render`, SVG only).** The accent is one `<path>` in `color`, drawn last. A band
+runs along the tile's bisecting diagonal from the border end `O`, through the host, and past the
+vertex `V`. It is clipped to the union of three things: the host cell; every **accent-colour**
+face (where it dissolves in invisibly — so the line merges into the matching shape and is cut only
+at a *foreign* colour); and host-colour faces in **edge-adjacent** tiles only (a short transversal
+poke that fills the pinch at `V` without nubbing into the diagonal tile across it). The `O` end is
+pushed past the border so the icon clips it — it runs off, no chop. Width is `DIAG_STROKE`×cell.
 
-`cell.diag = { dir, color, off }`; it never touches `kind/data/fg/bg`, so the tile structure —
-and every invariant below — is unchanged.
+**Which side it leans (`render`).** A thin band can sit on either side of the diagonal; the side is
+chosen so it connects to the borrowed colour. Three tiles meet the host at `V`: the **diagonal**
+tile (across `V`), the **cross-centre** tile `CC` (shares the host's centre-line edge), and the
+**neighbour** `NB` (shares the host's side edge). `sCC` records which side `CC` is on — it flips
+with the host's row. For `CC`/`NB` the corner reads as a *line-side* half (toward the host) and a
+*diagonal-side* half (toward the diagonal tile); the diagonal tile's corner reads as an *above-side*
+(toward `CC`) and *neighbour-side* half. First matching rule wins:
 
-**How it draws (`render`).** In SVG the accent is a polygon coloured `color`, drawn last:
-*straight* is a full-width band run through the vertex into the opposite tile (consumed there);
-*offset* is a parallelogram whose one long side is the tile's bisecting diagonal and whose
-other side crosses the bordering edge into the matching tile. Either way neither end tapers —
-the vertex end is consumed by the matching colour, and the opposite end (always on the top/
-bottom border) is extended past the corner so the icon edge clips it (it runs off, no chop).
-Width is `DIAG_STROKE`×cell. In the terminal it stays a single `╱`/`╲` glyph (accent fg over
-the solid bg) — the merge geometry is SVG-only. The colour is a real cell colour, so the
-recolour remap carries it along.
+1. `NB` line-side is target → lean to the neighbour (underside).
+2. `CC` line-side is target → lean to the cross-centre tile (upper side).
+3. `NB` diagonal-side is target *and* its line-side is base → underside.
+4. `CC` diagonal-side is target *and* its line-side is base → upper side.
+5. diagonal tile carries target on its neighbour side → underside.
+6. diagonal tile carries target on its above side → upper side.
+7. otherwise → centred.
+
+The vertex reads come from sampling `colorAt` a hair off `V` into each corner. In the terminal the
+accent stays a single `╱`/`╲` glyph (accent fg over the solid bg) — the merge/side geometry is
+SVG-only. The colour is a real cell colour, so the recolour remap carries it along.
 
 > A placed solid is a **shared** `SOLIDS` object reused across every icon, so the pass
 > *clones* the cell to attach `diag` — mutating in place would leak the accent into later

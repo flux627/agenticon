@@ -79,3 +79,32 @@ export function buildRecolorMap(text, cells) {
   }
   return cmap;
 }
+
+// Monochrome passes. Both are per-colour remaps over an icon's unique colours, so (like
+// recolour) they preserve region topology and feed SVG and terminal identically.
+const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+function uniqueColours(cells) {
+  const u = new Map();                                          // ckey -> rgb (fg/bg + accents)
+  for (const row of cells) for (const cell of row) {
+    u.set(ckey(cell.fg), cell.fg); u.set(ckey(cell.bg), cell.bg);
+    if (cell.diag) u.set(ckey(cell.diag.color), cell.diag.color);
+  }
+  return [...u.values()];
+}
+// Greyscale: each colour -> a grey of its Rec.709 luma, with the icon's luma range stretched
+// to span true black..white. A two-colour icon comes out pure B&W, richer ones a crisp ramp.
+export function buildGrayMap(cells) {
+  const cols = uniqueColours(cells), ys = cols.map(luma);
+  const lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || 1;
+  const map = new Map();
+  cols.forEach((c, i) => { const g = Math.round((ys[i] - lo) / span * 255); map.set(ckey(c), [g, g, g]); });
+  return map;
+}
+// Black-and-white (1-bit): threshold the stretched greys at their midpoint, so every colour
+// lands on pure black or pure white. Two adjacent same-side colours merge -- that's 1-bit.
+const BLACK = [0, 0, 0], WHITE = [255, 255, 255];
+export function buildBwMap(cells) {
+  const map = new Map();
+  for (const [k, g] of buildGrayMap(cells)) map.set(k, g[0] > 127 ? WHITE : BLACK);
+  return map;
+}

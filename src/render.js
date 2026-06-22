@@ -3,21 +3,27 @@
 // the final per-cell drawing differs.
 
 import { generate, GW, GH } from "./generate.js";
-import { buildRecolorMap } from "./recolor.js";
+import { buildRecolorMap, buildGrayMap, buildBwMap } from "./recolor.js";
 import { ckey } from "./palette.js";
 
-// Shared path: generate, then (by default) remap onto the bold palette.
-function cellsFor(text, recolor) {
+// Apply a colour map (ckey -> rgb) across every cell; the borrowed accent rides along too.
+function remap(cells, cmap) {
+  const m = (col) => cmap.get(ckey(col)) || col;
+  return cells.map((row) => row.map((c) => {
+    const nc = { ...c, fg: m(c.fg), bg: m(c.bg) };
+    if (c.diag) nc.diag = { ...c.diag, color: m(c.diag.color) };
+    return nc;
+  }));
+}
+// Shared path: generate, (by default) recolour onto the bold palette -- the canonical icon --
+// then optionally map THAT to greyscale or 1-bit black/white. Recolour is part of the icon's
+// identity, so the monochrome views are of the recoloured version, not the raw flow. Both are
+// just colour maps, so SVG and terminal render them through their normal paths.
+function cellsFor(text, { recolor = true, gray = false, bw = false } = {}) {
   let cells = generate(text);
-  if (recolor) {
-    const cmap = buildRecolorMap(text, cells);
-    const m = (col) => cmap.get(ckey(col)) || col;
-    cells = cells.map((row) => row.map((c) => {
-      const nc = { ...c, fg: m(c.fg), bg: m(c.bg) };
-      if (c.diag) nc.diag = { ...c.diag, color: m(c.diag.color) };   // borrowed accent rides the remap too
-      return nc;
-    }));
-  }
+  if (recolor) cells = remap(cells, buildRecolorMap(text, cells));
+  if (bw) cells = remap(cells, buildBwMap(cells));
+  else if (gray) cells = remap(cells, buildGrayMap(cells));
   return cells;
 }
 
@@ -95,10 +101,10 @@ function clipConvex(poly, clip) {
   return out;
 }
 
-/** SVG string for `text`. opts: { size = 64, recolor = true }. */
+/** SVG string for `text`. opts: { size = 64, recolor = true, gray = false, bw = false }. */
 export function agenticon(text, opts = {}) {
   const size = opts.size || 64;
-  const cells = cellsFor(text, opts.recolor !== false);
+  const cells = cellsFor(text, { recolor: opts.recolor !== false, gray: opts.gray, bw: opts.bw });
   const sx = size / (GW * 2), sy = size / (GH * 2);          // unit-grid -> px
   const groups = faceGroups(cells);
   const bg = groups.reduce((a, b) => (b.area > a.area ? b : a));   // dominant colour = backdrop
@@ -251,6 +257,39 @@ function tileGlyphs(cell, n, canonical) {
   return grid;
 }
 
+// Bare glyphs (no colour codes) for a black/white cell -- the terminal's own fg/bg paints
+// them, so white must be the "ink": a white region is filled (█ / a partial glyph), a black
+// one is the empty space the terminal background shows through. The cell is already pure B/W,
+// so "is this point white" is a flat lookup -- no per-tile threshold, no seam flips. n*n grid.
+const TRI_OPP = { UL: "LR", LR: "UL", UR: "LL", LL: "UR" };
+const isWhite = (col) => col[0] > 127;
+const qWhite = (cell, u, v) => isWhite(cell.data[(u < 0.5 ? 0 : 1) + (v < 0.5 ? 0 : 2)] ? cell.fg : cell.bg);
+function bwGlyphs(cell, n) {
+  const { kind, fg, bg } = cell;
+  const grid = Array.from({ length: n }, () => Array(n));
+  if (cell.diag) {                                                            // base solid, thin accent line
+    const base = cell.data[0] ? fg : bg, line = cell.diag.dir === "\\" ? "╲" : "╱";
+    const onLine = cell.diag.dir === "\\" ? (i, j) => i === j : (i, j) => i + j === n - 1;
+    const onG = isWhite(base) ? "█" : (isWhite(cell.diag.color) ? line : " "), offG = isWhite(base) ? "█" : " ";
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) grid[j][i] = onLine(i, j) ? onG : offG;
+    return grid;
+  }
+  if (kind === "Q") {
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++)
+      grid[j][i] = MASK2GLYPH[[qWhite(cell, (i + .25) / n, (j + .25) / n), qWhite(cell, (i + .75) / n, (j + .25) / n),
+                               qWhite(cell, (i + .25) / n, (j + .75) / n), qWhite(cell, (i + .75) / n, (j + .75) / n)]
+                              .map((w) => (w ? 1 : 0)).join("")];
+    return grid;
+  }
+  const D = cell.data, side = tFg[D], wf = isWhite(fg), wb = isWhite(bg);     // T: white side is the ink
+  if (wf === wb) return grid.map((row) => row.fill(wf ? "█" : " "));          // both same after threshold -> solid
+  const tri = wf ? TRI2GLYPH[D] : TRI2GLYPH[TRI_OPP[D]];
+  const onSplit = (D === "UL" || D === "LR") ? (i, j) => i + j === n - 1 : (i, j) => i === j;
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++)
+    grid[j][i] = onSplit(i, j) ? tri : ((side((i + .5) / n, (j + .5) / n) ? wf : wb) ? "█" : " ");
+  return grid;
+}
+
 const ESC = "\x1b", RESET = "\x1b[0m";
 function rgb256([r, g, b]) {
   if (r === g && g === b) {
@@ -265,25 +304,26 @@ function sgr(fg, bg, mode) {
   return `${ESC}[38;2;${fg[0]};${fg[1]};${fg[2]};48;2;${bg[0]};${bg[1]};${bg[2]}m`;
 }
 
-/** ANSI-coloured block glyphs for `text` — 2*GH lines tall by default.
- *  opts: { recolor = true, mode = "truecolor" | "256", canonical = true, scale = 1 }.
- *  scale > 1 blows every tile up into a scale*scale block of characters. */
+/** ANSI block glyphs for `text` — 2*GH lines tall by default. opts:
+ *  { recolor = true, gray = false, bw = false, mode = "truecolor" | "256", canonical = true, scale = 1 }.
+ *  scale > 1 blows every tile up into a scale*scale block of characters. `bw` emits NO colour
+ *  codes -- just the glyphs, painted by the terminal's own fg/bg (white side = ink). */
 export function agenticonAnsi(text, opts = {}) {
-  const recolor = opts.recolor !== false;
   const mode = opts.mode === "256" ? "256" : "truecolor";
   const canonical = opts.canonical !== false;
   const n = Math.max(1, Math.floor(opts.scale || 1));
-  const cells = cellsFor(text, recolor);
+  const cells = cellsFor(text, { recolor: opts.recolor !== false, gray: opts.gray, bw: opts.bw });
   const lines = [];
   for (let r = 0; r < GH; r++) {
-    const blocks = cells[r].map((cell) => tileGlyphs(cell, n, canonical));    // one n*n block per cell
+    const blocks = cells[r].map((cell) => opts.bw ? bwGlyphs(cell, n) : tileGlyphs(cell, n, canonical));
     for (let sj = 0; sj < n; sj++) {
       let line = "";
       for (let c = 0; c < GW; c++) for (let si = 0; si < n; si++) {
+        if (opts.bw) { line += blocks[c][sj][si]; continue; }                 // bare glyph, no SGR
         const [g, f, b] = blocks[c][sj][si];
         line += sgr(f, b, mode) + g;
       }
-      lines.push(line + RESET);
+      lines.push(opts.bw ? line : line + RESET);
     }
   }
   return lines.join("\n");

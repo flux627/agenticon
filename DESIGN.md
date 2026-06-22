@@ -188,6 +188,28 @@ toward the group colour, **brightness locked** (keeps light/dark structure, so
 every shape stays legible). It's a per-colour remap, so it preserves region
 topology — recoloured and raw icons have identical shapes.
 
+## Monochrome (`gray`, `bw`)
+
+Two more per-colour remaps, applied **after recolour** — the recoloured icon is the
+canonical one, so its monochrome views are of that, not the raw flow. They're plain
+colour maps (like recolour), so SVG needs nothing renderer-specific: dial it in there,
+both modes fall out.
+
+- **`buildGrayMap` (greyscale).** Each colour → a grey of its Rec.709 luma, with the
+  icon's luma range stretched to span true black..white (full 0..255 every time).
+- **`buildBwMap` (1-bit).** The greys, thresholded at their midpoint → pure black or
+  pure white. Bold and legible; two adjacent same-side colours merge, which is the
+  honest cost of one bit. `bw` wins if both flags are set.
+
+In the **terminal, `bw` emits no colour codes at all** — just glyphs, painted by the
+terminal's own fg/bg. That forces one extra rule the colour path doesn't need: the white
+side must be the "ink" (terminal fg), so a white region is a *filled* glyph (`█` / a
+partial block) and a black region is the *empty* space the terminal background shows
+through — the reverse of the colour renderer, which paints solids as a space over a
+coloured `bg`. So `bwGlyphs` picks glyphs by "is this point white" (a flat lookup, since
+the cells are already pure B/W — no per-tile threshold, no seam flips) rather than reusing
+the canonical fg/bg-minimising picker. SVG `bw` stays a normal two-colour render.
+
 ## Decisions & dead-ends (don't re-tread)
 
 - **Per-position contiguity, not set-overlap.** The original matcher accepted a

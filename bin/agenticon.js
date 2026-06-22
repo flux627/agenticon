@@ -11,6 +11,8 @@ Usage:
 
 Options:
   --no-recolor   raw 16-colour flow (skip the bold-palette remap)
+  --bw           1-bit black-and-white (terminal and SVG)
+  --gray         greyscale (terminal and SVG)
   --256          8-bit colour, for terminals without truecolor
   --literal      emit literal glyphs (no fg/bg-swap canonicalisation)
   --svg          output SVG to stdout
@@ -30,6 +32,8 @@ function main(argv) {
   const svg = flag("--svg") || size !== undefined;
   const opts = {
     recolor: !flag("--no-recolor"),
+    bw: flag("--bw"),
+    gray: flag("--gray"),
     mode: flag("--256") ? "256" : "truecolor",
     canonical: !flag("--literal"),
   };

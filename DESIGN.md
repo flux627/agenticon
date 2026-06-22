@@ -139,9 +139,18 @@ with the host's row. For `CC`/`NB` the corner reads as a *line-side* half (towar
 8. `CC` vertex is all base colour → upper side.
 9. otherwise → centred — including a **full-target** diagonal (target on both sides), which runs straight through.
 
-The vertex reads come from sampling `colorAt` a hair off `V` into each corner. In the terminal the
-accent stays a single `╱`/`╲` glyph (accent fg over the solid bg) — the merge/side geometry is
-SVG-only. The colour is a real cell colour, so the recolour remap carries it along.
+The vertex reads come from sampling `colorAt` a hair off `V` into each corner.
+
+Rules 1–4 connect cleanly on the host side, so their poke stays the strict edge-adjacent bridge.
+Rules 5–9 (the diagonal-tile and all-base cases, incl. centred) instead **draw over the two
+perpendicular wedge tiles** at `V` (`CC` and `NB`, any colour) — so the line keeps full width
+straight through the foreign wedges that flank a *centre* vertex rather than pinching to a point
+there. The diagonal tile is *not* poked, so the line never traverses the next tile; it continues
+into the diagonal tile only where that tile is the accent colour (via the accent-face clip).
+
+In the terminal the accent stays a single `╱`/`╲` glyph (accent fg over the solid bg) — the
+merge/side geometry is SVG-only. The colour is a real cell colour, so the recolour remap carries it
+along.
 
 > A placed solid is a **shared** `SOLIDS` object reused across every icon, so the pass
 > *clones* the cell to attach `diag` — mutating in place would leak the accent into later

@@ -149,23 +149,31 @@ export function agenticon(text, opts = {}) {
     const [dsx, dsy] = edge(Dt[0], Dt[1]); let dAbove = false, dNeigh = false;
     for (const th of [15, 30, 45, 60, 75]) { const r = th * Math.PI / 180, dx = dsx * Math.cos(r), dy = dsy * Math.sin(r);
       if (at(dx, dy) === key) { if ((dx * nx + dy * ny) * sCC > 0) dAbove = true; else dNeigh = true; } }
-    let ss;
+    let ss, pokeOK = false;                                    // A-D connect cleanly on the host side; E and below may run
     if (nbLine === key) ss = -sCC;                             // A: neighbour target on its line side -> underside
     else if (ccLine === key) ss = sCC;                         // B: above target on its line side -> upper
     else if (nbDiag === key && nbLine === hostKey) ss = -sCC;  // C: neighbour target on diagonal side, base on line side
     else if (ccDiag === key && ccLine === hostKey) ss = sCC;   // D: above target on diagonal side, base on line side
-    else if (dNeigh && !dAbove) ss = -sCC;                     // E: diagonal target on neighbour side only -> underside
-    else if (dAbove && !dNeigh) ss = sCC;                      // F: diagonal target on above side only -> upper
-    else if (nbLine === hostKey && nbDiag === hostKey) ss = -sCC;   // G: neighbour vertex all base -> underside
-    else if (ccLine === hostKey && ccDiag === hostKey) ss = sCC;    // H: above vertex all base -> upper
-    else ss = 0;                                               // I: centre (incl. a full-target diagonal -> straight through)
+    else { pokeOK = true;                                      // E and below: draw on top of the vertex tiles, poke and all
+      if (dNeigh && !dAbove) ss = -sCC;                        // E: diagonal target on neighbour side only -> underside
+      else if (dAbove && !dNeigh) ss = sCC;                    // F: diagonal target on above side only -> upper
+      else if (nbLine === hostKey && nbDiag === hostKey) ss = -sCC;   // G: neighbour vertex all base -> underside
+      else if (ccLine === hostKey && ccDiag === hostKey) ss = sCC;    // H: above vertex all base -> upper
+      else ss = 0; }                                          // I: centre (incl. full-target diagonal -> straight through)
     const s = ss * rad;
     const aox = O[0] - ux * ch + nx * s, aoy = O[1] - uy * ch + ny * s;   // run-off end, pushed past the border
     const avx = V[0] + ux * L + nx * s, avy = V[1] + uy * L + ny * s;     // run past V; matching colour consumes it
     const band = [[aox + nx * rad, aoy + ny * rad], [avx + nx * rad, avy + ny * rad],
                   [avx - nx * rad, avy - ny * rad], [aox - nx * rad, aoy - ny * rad]];
+    // A-D poke only into edge-adjacent host colour (the strict bridge); E and below draw over the perpendicular wedge
+    // tiles at V (cross-centre and neighbour, any colour) so the line keeps full width through the foreign wedges
+    // flanking a centre vertex instead of pinching there. The diagonal tile is NOT poked: the line continues into it
+    // only where it is the accent colour (via the accent-face clip), so it never traverses the diagonal tile.
+    const pokeFaces = pokeOK
+      ? [CC, NB].flatMap(([ac, ar]) => cellFaces(cells[ar][ac], ac * cw, ar * ch, cw, ch).map((f) => f.poly))
+      : hostFaces;
     const pieces = [clipConvex(band, [TL, TR, BR, BL]),
-      ...all.map((f) => clipConvex(band, f)), ...hostFaces.map((f) => clipConvex(band, f))].filter((p) => p.length > 2);
+      ...all.map((f) => clipConvex(band, f)), ...pokeFaces.map((f) => clipConvex(band, f))].filter((p) => p.length > 2);
     if (pieces.length) body += `<path d="${pieces.map((p) => "M" + p.map((qq) => `${qq[0]} ${qq[1]}`).join("L") + "Z").join("")}" fill="${hex(color)}"/>`;
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${body}</svg>`;

@@ -81,14 +81,19 @@
       <label>aspect preset</label>
       <div class="seg">
         <button data-preset="square" title="1:1">Square</button>
-        <button data-preset="terminal" title="4×2 grid with square cells = 2:1 (wider than tall)">Terminal</button>
+        <button data-preset="terminal" title="terminal proportions — slightly taller than wide">Terminal</button>
       </div>
+    </div>
+    <div class="field">
+      <label>cell h:w</label>
+      <input id="char" type="number" min="1" max="4" step="0.05" value="2.1" title="height÷width of one terminal character cell">
     </div>
 
     <label class="check"><input id="recolor" type="checkbox" checked> recolor</label>
 
-    <div class="hint">Terminal = the 4×2 grid drawn with square cells (2:1). A real terminal is near-square because
-      monospace glyphs are ~2× taller than wide.</div>
+    <div class="hint">We usually render these <b>square</b>. In a terminal the 4×2 grid lands <b>slightly taller than
+      wide</b> — each monospace cell is a hair more than 2× taller than wide. Set the cell height:width at left, then
+      hit <b>Terminal</b> (2.0 = exactly square).</div>
   </div>
 
   <div class="stage">
@@ -154,10 +159,11 @@ wEl.addEventListener("input", () => { if (lockEl.checked) hEl.value = Math.max(1
 hEl.addEventListener("input", () => { if (lockEl.checked) wEl.value = Math.max(16, Math.round(+hEl.value * ratio)); redraw(); });
 lockEl.addEventListener("change", syncRatio);
 
-// presets keep width, set height
+// presets keep width, set height. Terminal: a 4x2 grid of cells each `cell h:w` tall:wide -> height = w * (h:w)/2,
+// so 2.0 is exactly square and the default 2.1 is slightly taller (as it renders in a terminal).
 for (const b of document.querySelectorAll("[data-preset]")) b.addEventListener("click", () => {
   const w = +wEl.value || 320;
-  hEl.value = b.dataset.preset === "terminal" ? Math.round(w / 2) : w;
+  hEl.value = b.dataset.preset === "terminal" ? Math.round(w * (+$("char").value || 2.1) / 2) : w;
   syncRatio(); redraw();
 });
 

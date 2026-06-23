@@ -190,12 +190,14 @@ function svgFromCells(cells, size) {
     const avx = V[0] + ux * L + nx * s, avy = V[1] + uy * L + ny * s;     // run past V; matching colour consumes it
     const band = [[aox + nx * rad, aoy + ny * rad], [avx + nx * rad, avy + ny * rad],
                   [avx - nx * rad, avy - ny * rad], [aox - nx * rad, aoy - ny * rad]];
-    // A-D poke only into edge-adjacent host colour (the strict bridge); E and below draw over the perpendicular wedge
-    // tiles at V (cross-centre and neighbour, any colour) so the line keeps full width through the foreign wedges
-    // flanking a centre vertex instead of pinching there. The diagonal tile is NOT poked: the line continues into it
-    // only where it is the accent colour (via the accent-face clip), so it never traverses the diagonal tile.
+    // The host-colour bridge (`hostFaces`: edge-adjacent host-colour faces only -- a strict poke that fills the pinch
+    // where the band crosses a seam, e.g. the run-off end O on an interior column seam, continuing onto the base-colour
+    // part of the next tile, including a triangle's base-colour half) ALWAYS applies. When pokeOK, also draw over the
+    // perpendicular wedge tiles at V (cross-centre and neighbour, any colour) so the line keeps full width through the
+    // foreign wedges flanking a centre vertex instead of pinching there. The diagonal tile is NOT poked: the line
+    // continues into it only where it is the accent colour (via the accent-face clip), so it never traverses it.
     const pokeFaces = pokeOK
-      ? [CC, NB].flatMap(([ac, ar]) => cellFaces(cells[ar][ac], ac * cw, ar * ch, cw, ch).map((f) => f.poly))
+      ? hostFaces.concat([CC, NB].flatMap(([ac, ar]) => cellFaces(cells[ar][ac], ac * cw, ar * ch, cw, ch).map((f) => f.poly)))
       : hostFaces;
     const over = [clipConvex(band, [TL, TR, BR, BL]), ...pokeFaces.map((f) => clipConvex(band, f))];
     const under = all.map((f) => clipConvex(band, f));         // dissolve into matching faces -> under-layer

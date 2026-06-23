@@ -1,6 +1,6 @@
 {
   "name": "agenticon",
-  "version": "0.0.0-alpha",
+  "version": "0.0.1-alpha",
   "description": "Deterministic geometric identicons — crisp SVG for the web and ANSI block-glyph art for the terminal, from one shared generator.",
   "author": "Julien Heller",
   "repository": {

@@ -1,6 +1,6 @@
 {
   "name": "agenticon",
-  "version": "2.0.0",
+  "version": "0.0.2-alpha",
   "description": "Deterministic geometric identicons — crisp SVG for the web and ANSI block-glyph art for the terminal, from one shared generator.",
   "type": "module",
   "main": "src/index.js",

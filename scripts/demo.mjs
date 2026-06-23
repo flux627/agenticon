@@ -50,22 +50,22 @@ const padCentre = (t, w) => {
   const l = Math.floor((w - t.length) / 2);
   return " ".repeat(l) + t + " ".repeat(w - t.length - l);
 };
-function buildAnsi({ scale = 4, gap = 3 } = {}) {
-  const sep = " ".repeat(gap), iconW = GW * scale, h = GH * scale, out = [];
+function buildAnsi({ scale = 4, gap = 6 } = {}) {
+  const sep = " ".repeat(gap), pad = "  ", iconW = GW * scale, h = GH * scale, out = [];
   for (let r = 0; r < ROWS; r++) {
     const items = GALLERY.slice(r * COLS, (r + 1) * COLS);
     const blocks = items.map((t) => agenticonAnsi(t, { scale }).split("\n"));
-    for (let ln = 0; ln < h; ln++) out.push(blocks.map((b) => b[ln]).join(sep));
+    for (let ln = 0; ln < h; ln++) out.push(pad + blocks.map((b) => b[ln]).join(sep));
     out.push("");                                          // breathing room under the icons
-    out.push(items.map((t) => padCentre(t, iconW)).join(sep));
-    if (r < ROWS - 1) out.push("");                        // blank row between bands
+    out.push(pad + items.map((t) => padCentre(t, iconW)).join(sep));
+    if (r < ROWS - 1) out.push("", "");                    // two blank rows between bands
   }
-  return out.join("\n");
+  return "\n\n" + out.join("\n") + "\n\n";                 // top & bottom breathing room
 }
 
 // ---- entry ----
 const argv = process.argv.slice(2);
-if (argv.includes("--ansi")) process.stdout.write(buildAnsi() + "\n");
+if (argv.includes("--ansi")) process.stdout.write(buildAnsi());
 else {
   const { W, H, svg } = buildSvg();
   const root = join(dirname(fileURLToPath(import.meta.url)), "..");

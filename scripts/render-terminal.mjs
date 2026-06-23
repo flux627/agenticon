@@ -26,8 +26,12 @@ for (const [label, p] of [["ghostty-web dist", DIST], ["Chrome", CHROME]]) {
   if (!existsSync(p)) { console.error(`✗ ${label} not found: ${p}\n  (see header of ${import.meta.url})`); process.exit(1); }
 }
 
-// canonical terminal gallery, with the cursor hidden and no trailing newline (so it can't scroll)
-let content = execFileSync("node", [join(ROOT, "scripts", "demo.mjs"), "--ansi"], { encoding: "utf8" }).replace(/\n+$/, "");
+// canonical terminal gallery from --ansi. Strip the stdout-only framing (top/bottom blank
+// lines + the 2-space edge indent) since this HTML frame supplies its own padding; keep the
+// real layout (doubled gaps, blank rows between bands). Then hide cursor; no trailing newline.
+let content = execFileSync("node", [join(ROOT, "scripts", "demo.mjs"), "--ansi"], { encoding: "utf8" }).replace(/^\n+|\n+$/g, "");
+const dedent = Math.min(...content.split("\n").filter((l) => l.trim()).map((l) => l.match(/^ */)[0].length));
+content = content.split("\n").map((l) => l.slice(dedent)).join("\n");
 const visibleLen = (l) => [...l.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")].length;
 const cols = Math.max(...content.split("\n").map(visibleLen));
 const rows = content.split("\n").length;
@@ -45,7 +49,8 @@ body{display:flex;align-items:center;justify-content:center;font-family:Menlo,mo
 import { init, Terminal } from '/ghostty-web.js';
 await init('/ghostty-vt.wasm');
 const term = new Terminal({ cols:${cols}, rows:${rows}, fontSize:15, fontFamily:'Menlo, monospace',
-  convertEol:true, cursorBlink:false, theme:{ background:'#0d1117', foreground:'#8b949e' } });
+  convertEol:true, cursorBlink:false,
+  theme:{ background:'#0d1117', foreground:'#8b949e', cursor:'#0d1117', cursorAccent:'#0d1117' } });
 term.open(document.getElementById('terminal'));
 term.write(${JSON.stringify(content)});
 </script></body></html>`;

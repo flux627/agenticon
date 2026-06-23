@@ -3,8 +3,7 @@
 //   (default)   write assets/demo.svg   — composite SVG (one agenticon() per tile)
 //   --ansi      print the gallery as ANSI block glyphs (the terminal renderer)
 // Deterministic: every tile is just agenticon(text) / agenticonAnsi(text). The terminal
-// PNG in the README is this --ansi output rendered through a real terminal; see
-// scripts/render-terminal.mjs.
+// PNG in the README is a screenshot of this --ansi output in a real terminal.
 //   node scripts/demo.mjs            (or: npm run demo)
 
 import { writeFileSync, mkdirSync } from "node:fs";

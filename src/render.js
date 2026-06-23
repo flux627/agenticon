@@ -118,9 +118,18 @@ export function agenticon(text, opts = {}) {
   // The band runs from the border end O, through the host, past V, and is clipped to three things: the host cell; every
   // accent-colour face (where it dissolves in invisibly, so the line merges into the matching shape and is cut only at a
   // foreign colour); and host-colour faces in EDGE-adjacent tiles only (a short poke that fills the pinch at V without
-  // nubbing into the diagonal tile across V). Which side of the diagonal it leans onto is decided per-vertex below. All
-  // pieces go in one <path> so the host-side and merged-side fuse seamlessly; the O end runs off the border (no chop).
+  // nubbing into the diagonal tile across V). Which side of the diagonal it leans onto is decided per-vertex below. The
+  // host-side and pokes share one <path> so they fuse seamlessly; the dissolve goes in a separate under-path (it only
+  // ever sits over matching-colour base, so any hairline back to the core is invisible). The O end runs off the border.
   const cw = size / GW, ch = size / GH, rad = Math.min(cw, ch) * DIAG_STROKE / 2;
+  // Two z-layers spanning ALL accents. The dissolve pieces (band clipped to a matching-colour
+  // face -- accent colour over its own colour, so invisible against the base, present only to
+  // bridge the seam past V) go UNDERNEATH; each accent's host-cell line and pokes go on top. So
+  // where two diagonals cross in one cell, one accent's invisible dissolve can't erase the other's
+  // line (the cyan band running past its vertex into a cyan cell that already hosts a slash).
+  const underPaths = [], overPaths = [];
+  const accentPath = (pieces, color) => { const ps = pieces.filter((p) => p.length > 2);
+    return ps.length ? `<path d="${ps.map((p) => "M" + p.map((qq) => `${qq[0]} ${qq[1]}`).join("L") + "Z").join("")}" fill="${hex(color)}"/>` : ""; };
   for (let gr = 0; gr < GH; gr++) for (let gc = 0; gc < GW; gc++) {
     const cell = cells[gr][gc]; if (!cell.diag) continue;
     const dir = cell.diag.dir, color = cell.diag.color;
@@ -178,10 +187,12 @@ export function agenticon(text, opts = {}) {
     const pokeFaces = pokeOK
       ? [CC, NB].flatMap(([ac, ar]) => cellFaces(cells[ar][ac], ac * cw, ar * ch, cw, ch).map((f) => f.poly))
       : hostFaces;
-    const pieces = [clipConvex(band, [TL, TR, BR, BL]),
-      ...all.map((f) => clipConvex(band, f)), ...pokeFaces.map((f) => clipConvex(band, f))].filter((p) => p.length > 2);
-    if (pieces.length) body += `<path d="${pieces.map((p) => "M" + p.map((qq) => `${qq[0]} ${qq[1]}`).join("L") + "Z").join("")}" fill="${hex(color)}"/>`;
+    const over = [clipConvex(band, [TL, TR, BR, BL]), ...pokeFaces.map((f) => clipConvex(band, f))];
+    const under = all.map((f) => clipConvex(band, f));         // dissolve into matching faces -> under-layer
+    const u = accentPath(under, color); if (u) underPaths.push(u);
+    const o = accentPath(over, color); if (o) overPaths.push(o);
   }
+  body += underPaths.join("") + overPaths.join("");           // dissolves first, then every accent's line on top
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${body}</svg>`;
 }
 

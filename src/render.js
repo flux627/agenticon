@@ -147,15 +147,11 @@ function svgFromCells(cells, size) {
     const hostKey = ckey(cellFaces(cell, x, y, cw, ch)[0].color);   // host's own colour
     const TL = [x, y], TR = [x + cw, y], BL = [x, y + ch], BR = [x + cw, y + ch];
     const [V, O] = dir === "\\" ? (gr === 0 ? [BR, TL] : [TL, BR]) : (gr === 0 ? [BL, TR] : [TR, BL]);
-    const all = [], hostFaces = [];                            // band paints accent colour (it dissolves in, invisibly)
-    for (let ar = 0; ar < GH; ar++) for (let ac = 0; ac < GW; ac++) {   // or host colour -- but host colour ONLY in cells
-      if (ac === gc && ar === gr) continue;                    // that share an EDGE with the host, so the poke is a short
-      const edgeAdj = Math.abs(ac - gc) + Math.abs(ar - gr) === 1;      // transversal wedge filling the pinch at V, never
-      for (const f of cellFaces(cells[ar][ac], ac * cw, ar * ch, cw, ch)) {   // a nub hanging into the diagonal tile
-        const fk = ckey(f.color);
-        if (fk === key) all.push(f.poly);
-        else if (fk === hostKey && edgeAdj) hostFaces.push(f.poly);
-      }
+    const all = [];                                            // every accent-colour face anywhere: the band dissolves into them
+    for (let ar = 0; ar < GH; ar++) for (let ac = 0; ac < GW; ac++) {
+      if (ac === gc && ar === gr) continue;
+      for (const f of cellFaces(cells[ar][ac], ac * cw, ar * ch, cw, ch))
+        if (ckey(f.color) === key) all.push(f.poly);
     }
     const L = Math.hypot(V[0] - O[0], V[1] - O[1]), ux = (V[0] - O[0]) / L, uy = (V[1] - O[1]) / L;
     const nx = -uy, ny = ux;
@@ -197,10 +193,21 @@ function svgFromCells(cells, size) {
     const avx = V[0] + ux * L + nx * s, avy = V[1] + uy * L + ny * s;     // run past V; matching colour consumes it
     const band = [[aox + nx * rad, aoy + ny * rad], [avx + nx * rad, avy + ny * rad],
                   [avx - nx * rad, avy - ny * rad], [aox - nx * rad, aoy - ny * rad]];
-    // A-D poke only into edge-adjacent host colour (the strict bridge); E and below draw over the perpendicular wedge
-    // tiles at V (cross-centre and neighbour, any colour) so the line keeps full width through the foreign wedges
-    // flanking a centre vertex instead of pinching there. The diagonal tile is NOT poked: the line continues into it
-    // only where it is the accent colour (via the accent-face clip), so it never traverses the diagonal tile.
+    // A-D poke only into edge-adjacent host colour (the strict bridge filling the pinch at V), with one exclusion:
+    // a vertex tile (NB or CC) whose LINE side -- the half along the seam it shares with the host -- is NOT the host
+    // colour touches the host only at the point V, so poking its far host-coloured corner would nub the line past V
+    // into that colour. The line must stop when it reaches the neighbour's colour, so that tile is skipped. (Tiles
+    // sharing the seam away from V keep their poke -- they bridge along a real edge, not a single point.) E and below
+    // draw over the perpendicular wedge tiles at V (cross-centre and neighbour, any colour) so the line keeps full
+    // width through the foreign wedges flanking a centre vertex. The diagonal tile is never poked: the line continues
+    // into it only where it is the accent colour (via the accent-face clip).
+    const nub = ([ac, ar]) => (ac === NB[0] && ar === NB[1] && nbLine !== hostKey)
+                           || (ac === CC[0] && ar === CC[1] && ccLine !== hostKey);
+    const hostFaces = [];
+    for (let ar = 0; ar < GH; ar++) for (let ac = 0; ac < GW; ac++) {
+      if (Math.abs(ac - gc) + Math.abs(ar - gr) !== 1 || nub([ac, ar])) continue;
+      for (const f of cellFaces(cells[ar][ac], ac * cw, ar * ch, cw, ch)) if (ckey(f.color) === hostKey) hostFaces.push(f.poly);
+    }
     const pokeFaces = pokeOK
       ? [CC, NB].flatMap(([ac, ar]) => cellFaces(cells[ar][ac], ac * cw, ar * ch, cw, ch).map((f) => f.poly))
       : hostFaces;

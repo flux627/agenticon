@@ -28,6 +28,7 @@
   "scripts": {
     "test": "node scripts/analyze.mjs",
     "demo": "node scripts/demo.mjs",
+    "demo:terminal": "node scripts/render-terminal.mjs",
     "gallery": "node bin/agenticon.js --gallery",
     "analyze": "node scripts/analyze.mjs",
     "serve": "node scripts/serve.mjs"

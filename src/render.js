@@ -182,6 +182,13 @@ function svgFromCells(cells, size) {
     else { pokeOK = true;                                      // E and below: draw on top of the vertex tiles, poke and all
       if (dNeigh && !dAbove) ss = -sCC;                        // E: diagonal target on neighbour side only -> underside
       else if (dAbove && !dNeigh) ss = sCC;                    // F: diagonal target on above side only -> upper
+      // C/D wanted to lean toward a NB/CC *diagonal* target but were vetoed because that tile's line side is a
+      // foreign third colour, not the host base. Prefer continuing within the same colour -- but when the line
+      // can't, take the lean anyway and cross the foreign wedge to actually reach the target, and ONLY when the
+      // opposite side has no target to connect to. Reaching the colour through one foreign wedge beats leaning at
+      // a side with nothing on it (which is what the all-base G/H fallback would otherwise do).
+      else if (nbDiag === key && !(ccLine === key || ccDiag === key || dAbove)) ss = -sCC;   // C': NB diagonal target, no upper target -> cross to it
+      else if (ccDiag === key && !(nbLine === key || nbDiag === key || dNeigh)) ss = sCC;    // D': CC diagonal target, no lower target -> cross to it
       else if (nbLine === hostKey && nbDiag === hostKey) ss = -sCC;   // G: neighbour vertex all base -> underside
       else if (ccLine === hostKey && ccDiag === hostKey) ss = sCC;    // H: above vertex all base -> upper
       else ss = 0; }                                          // I: centre (incl. full-target diagonal -> straight through)

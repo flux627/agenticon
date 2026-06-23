@@ -34,7 +34,7 @@ const SOLIDS = PALETTE.map((x) => ({ kind: "Q", data: [false, false, false, fals
 const INCELL = { 0: [1, 2], 1: [0, 3], 2: [0, 3], 3: [1, 2] };  // in-cell orthogonal subpixels
 const SUBPX_EDGES = { 0: [["N", 0], ["W", 0]], 1: [["N", 1], ["E", 0]], 2: [["S", 0], ["W", 1]], 3: [["S", 1], ["E", 1]] };
 const EDGE_DIR = { N: [0, -1], S: [0, 1], W: [-1, 0], E: [1, 0] };
-const AREA_LIMIT = 2.5;    // no contiguous colour region may exceed this many tiles (1 = one cell)
+export const AREA_LIMIT = 2.5;    // no contiguous colour region may exceed this many tiles (1 = one cell)
 const DIAG_PROB = 0.5;     // chance a solid tile gets a diagonal accent toward an interior vertex
 const TRI_BG = { UL: 3, UR: 2, LL: 1, LR: 0 };   // the one corner a triangle leaves as bg (0UL 1UR 2LL 3LR)
 

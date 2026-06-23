@@ -8,7 +8,7 @@
 //
 //   node scripts/analyze.mjs [N]        (or: npm run analyze)
 
-import { generate, GW, GH } from "../src/index.js";
+import { generate, GW, GH, AREA_LIMIT } from "../src/index.js";
 
 const N = parseInt(process.argv[2], 10) || 10000;
 const ckey = (c) => (c[0] << 16) | (c[1] << 8) | c[2];
@@ -102,5 +102,9 @@ let cum = 0;
 for (let k = 0; k < MAXR; k++) { const a = rank[k] / N; cum += a; if (a < 0.005) break; console.log(`  #${String(k + 1).padEnd(3)} ${a.toFixed(3).padStart(7)}   (cum ${cum.toFixed(2)})`); }
 console.log(`\n  mean regions/icon: ${(regions / N).toFixed(2)}`);
 console.log("\nInvariants:");
+const regionOk = maxRegion <= AREA_LIMIT + 1e-9;
 console.log(`  orphaned 1/4 squares: ${orphans}   ${orphans === 0 ? "OK" : "*** VIOLATION ***"}`);
-console.log(`  largest region: ${maxRegion.toFixed(3)} tiles`);
+console.log(`  largest region: ${maxRegion.toFixed(3)} tiles (limit ${AREA_LIMIT})   ${regionOk ? "OK" : "*** VIOLATION ***"}`);
+
+// Exit non-zero on any invariant breach so this doubles as the test gate (npm test).
+if (orphans !== 0 || !regionOk) process.exit(1);

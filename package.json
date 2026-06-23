@@ -2,6 +2,13 @@
   "name": "agenticon",
   "version": "2.0.0",
   "description": "Deterministic geometric identicons — crisp SVG for the web and ANSI block-glyph art for the terminal, from one shared generator.",
+  "author": "Julien Heller",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flux627/agenticon.git"
+  },
+  "homepage": "https://github.com/flux627/agenticon#readme",
+  "bugs": "https://github.com/flux627/agenticon/issues",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -19,6 +26,7 @@
     "node": ">=18"
   },
   "scripts": {
+    "test": "node scripts/analyze.mjs",
     "gallery": "node bin/agenticon.js --gallery",
     "analyze": "node scripts/analyze.mjs",
     "serve": "node scripts/serve.mjs"

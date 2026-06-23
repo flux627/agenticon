@@ -103,8 +103,18 @@ function clipConvex(poly, clip) {
 
 /** SVG string for `text`. opts: { size = 64, recolor = true, gray = false, bw = false }. */
 export function agenticon(text, opts = {}) {
-  const size = opts.size || 64;
   const cells = cellsFor(text, { recolor: opts.recolor !== false, gray: opts.gray, bw: opts.bw });
+  return svgFromCells(cells, opts.size || 64);
+}
+
+/** SVG for an explicit GH×GW `cells` grid, rendered exactly as given -- no generate, no recolour.
+ *  Lets a caller (e.g. the playground's tile editor) hand-build or tweak an icon. opts: { size = 64 }. */
+export function agenticonFromCells(cells, opts = {}) {
+  return svgFromCells(cells, opts.size || 64);
+}
+
+// The shared cells -> SVG pass behind both entry points above.
+function svgFromCells(cells, size) {
   const sx = size / (GW * 2), sy = size / (GH * 2);          // unit-grid -> px
   const groups = faceGroups(cells);
   const bg = groups.reduce((a, b) => (b.area > a.area ? b : a));   // dominant colour = backdrop

@@ -48,6 +48,37 @@
   figcaption { text-align: center; margin-top: 6px; color: #7e8694; font-size: 11px;
     max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hint { color: #6b7280; font-size: 12px; margin-left: auto; align-self: center; max-width: 320px; }
+
+  /* ---- tile editor ---- */
+  .ed-hint { color: #6b7280; font-size: 12px; font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 12px; }
+  .ed-stage { display: flex; gap: 26px; align-items: flex-start; flex-wrap: wrap; }
+  .ed-canvas { position: relative; width: 320px; height: 320px; border: 1px solid #2a2e37; border-radius: 14px; overflow: hidden; }
+  .ed-canvas svg { display: block; width: 100%; height: 100%; }
+  .ed-grid { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(2, 1fr); }
+  .ed-grid button { background: transparent; border: 0; margin: 0; padding: 0; cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+  .ed-grid button:hover { background: rgba(255,255,255,.07); }
+  .ed-grid button.sel { box-shadow: inset 0 0 0 2px #4d83bf; background: rgba(77,131,191,.14); }
+  .ed-actions { margin-top: 12px; display: flex; gap: 8px; }
+  .ed-right { min-width: 300px; flex: 1; max-width: 440px; background: #1c1f26; border: 1px solid #2a2e37;
+    border-radius: 12px; padding: 14px 16px; }
+  .ed-title { font-size: 13px; color: #d7dae0; font-weight: 600; margin-bottom: 4px; }
+  .ed-row { display: flex; align-items: center; gap: 10px; margin: 11px 0; }
+  .ed-row > .lbl { width: 92px; flex: none; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #828b99; }
+  .ed-note { color: #6b7280; font-size: 11px; }
+  .quad { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    width: 72px; height: 72px; border-radius: 7px; overflow: hidden; border: 1px solid #333845; flex: none; }
+  .quad button { border: 0; margin: 0; padding: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); }
+  .tris { display: flex; gap: 6px; }
+  .tris button { width: 38px; height: 38px; font-size: 20px; line-height: 1; display: flex;
+    align-items: center; justify-content: center; }
+  .tris button.sel, .seg button.sel { background: #3b6ea5; border-color: #4d83bf; color: #fff; }
+  .chips { display: flex; gap: 5px; flex-wrap: wrap; }
+  .chip { width: 20px; height: 20px; border-radius: 5px; border: 1px solid rgba(255,255,255,.18);
+    cursor: pointer; padding: 0; }
+  .chip.sel { outline: 2px solid #cfd6e2; outline-offset: 1px; }
+  input[type=color] { width: 36px; height: 28px; padding: 0; border: 1px solid #333845; border-radius: 6px;
+    background: #11131a; cursor: pointer; flex: none; }
 </style>
 </head>
 <body>
@@ -103,12 +134,29 @@
     </div>
   </div>
 
+  <h2>tile editor
+    <button id="edLoad" style="margin-left:8px">⟵ load current seed</button>
+    <span class="ed-hint">click a cell, then change its shape &amp; colours — the icon rebuilds live from your hand-made tiles</span>
+  </h2>
+  <div class="ed-stage">
+    <div>
+      <div class="ed-canvas"><div id="edSvg"></div><div class="ed-grid" id="edGrid"></div></div>
+      <div class="ed-actions">
+        <button id="edCopy">Copy SVG</button>
+        <button id="edDownload">Download SVG</button>
+        <button id="edResetSeed">Reset to seed</button>
+      </div>
+      <div class="meta" id="edMeta"></div>
+    </div>
+    <div class="ed-right" id="edPanel"></div>
+  </div>
+
   <h2>random sampler <button id="resample" style="margin-left:8px">↻ new batch</button></h2>
   <div class="grid" id="gallery"></div>
 </div>
 
 <script type="module">
-import { agenticon } from "./src/index.js";
+import { agenticon, agenticonFromCells, generate, buildRecolorMap, GW, GH } from "./src/index.js";
 
 const $ = (id) => document.getElementById(id);
 const seedEl = $("seed"), wEl = $("w"), hEl = $("h"), lockEl = $("lock"), recolorEl = $("recolor");
@@ -174,6 +222,163 @@ $("resample").addEventListener("click", () => { seeds = Array.from({ length: 18 
 
 draw();
 renderGallery();
+
+// ---- tile editor ----------------------------------------------------------
+// Snapshot a seed's cells (recoloured exactly as the preview shows them), then let the
+// user hand-edit each of the 8 tiles and rebuild the SVG live via agenticonFromCells.
+const edSvg = $("edSvg"), edGrid = $("edGrid"), edPanel = $("edPanel"), edMeta = $("edMeta");
+const PACK = (c) => (c[0] << 16) | (c[1] << 8) | c[2];
+const toHex = (c) => "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
+const fromHex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const cloneCell = (c) => {                                     // deep clone -- placed tiles are shared objects, never mutate in place
+  const n = { kind: c.kind, data: Array.isArray(c.data) ? c.data.slice() : c.data, fg: c.fg.slice(), bg: c.bg.slice() };
+  if (c.diag) n.diag = { dir: c.diag.dir, color: c.diag.color.slice() };
+  return n;
+};
+
+let editCells = null, sel = { r: 0, c: 0 };
+
+function captureCells(seed) {                                  // mirror cellsFor: generate, then (by default) recolour
+  const cells = generate(seed);
+  if (!recolorEl.checked) return cells.map((row) => row.map(cloneCell));
+  const m = buildRecolorMap(seed, cells), f = (col) => m.get(PACK(col)) || col;
+  return cells.map((row) => row.map((c) => {
+    const n = { kind: c.kind, data: Array.isArray(c.data) ? c.data.slice() : c.data, fg: f(c.fg).slice(), bg: f(c.bg).slice() };
+    if (c.diag) n.diag = { dir: c.diag.dir, color: f(c.diag.color).slice() };
+    return n;
+  }));
+}
+function iconColours() {                                       // unique colours currently in the grid (for swatch chips)
+  const seen = new Map();
+  for (const row of editCells) for (const c of row) {
+    seen.set(PACK(c.fg), c.fg); seen.set(PACK(c.bg), c.bg);
+    if (c.diag) seen.set(PACK(c.diag.color), c.diag.color);
+  }
+  return [...seen.values()];
+}
+const cur = () => editCells[sel.r][sel.c];
+
+function loadEditor(seed) { editCells = captureCells(seed); sel = { r: 0, c: 0 }; renderEditor(); }
+function renderEditor() { renderCanvas(); renderPanel(); }
+
+function renderCanvas() {
+  edSvg.innerHTML = agenticonFromCells(editCells, { size: 320 });
+  edGrid.replaceChildren();
+  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) {  // row-major overlay matches the CSS grid
+    const b = document.createElement("button");
+    if (r === sel.r && c === sel.c) b.className = "sel";
+    b.title = `cell · col ${c + 1}, row ${r + 1}`;
+    b.onclick = () => { sel = { r, c }; renderEditor(); };
+    edGrid.append(b);
+  }
+  edMeta.innerHTML = `editing <b>${seedEl.value || "(empty)"}</b> · hand-made · 4×2 tiles${recolorEl.checked ? " · recolour baked in" : ""}`;
+}
+
+function colourRow(label, get, set) {                          // native picker + chips drawn from the icon's own colours
+  const row = document.createElement("div"); row.className = "ed-row";
+  const lbl = document.createElement("div"); lbl.className = "lbl"; lbl.textContent = label;
+  const input = document.createElement("input"); input.type = "color"; input.value = toHex(get());
+  input.oninput = () => { set(fromHex(input.value)); renderCanvas(); };   // live; don't rebuild panel (keeps the picker open)
+  const chips = document.createElement("div"); chips.className = "chips";
+  for (const col of iconColours()) {
+    const chip = document.createElement("button"); chip.className = "chip"; chip.style.background = toHex(col);
+    chip.title = toHex(col);
+    if (PACK(col) === PACK(get())) chip.classList.add("sel");
+    chip.onclick = () => { set(col.slice()); renderEditor(); };
+    chips.append(chip);
+  }
+  row.append(lbl, input, chips);
+  return row;
+}
+function quadEditor(cell) {                                    // 2×2 of UL UR LL LR -- click a quadrant to flip fg/bg
+  const q = document.createElement("div"); q.className = "quad";
+  for (let i = 0; i < 4; i++) {
+    const b = document.createElement("button");
+    b.style.background = toHex(cell.data[i] ? cell.fg : cell.bg);
+    b.title = (cell.data[i] ? "fg" : "bg") + " — click to toggle";
+    b.onclick = () => { cell.data = cell.data.slice(); cell.data[i] = !cell.data[i]; renderEditor(); };
+    q.append(b);
+  }
+  return q;
+}
+function triEditor(cell) {                                     // pick which corner is the fg triangle
+  const wrap = document.createElement("div"); wrap.className = "tris";
+  const glyph = { UL: "◤", UR: "◥", LL: "◣", LR: "◢" };
+  for (const corner of ["UL", "UR", "LL", "LR"]) {
+    const b = document.createElement("button"); b.textContent = glyph[corner];
+    b.style.color = toHex(cell.fg); b.style.background = toHex(cell.bg);
+    if (cell.data === corner) b.classList.add("sel");
+    b.onclick = () => { cell.data = corner; renderEditor(); };
+    wrap.append(b);
+  }
+  return wrap;
+}
+function setKind(k) {
+  const cell = cur(); if (cell.kind === k) return;
+  cell.data = k === "Q" ? [false, false, false, false] : "UL";
+  cell.kind = k; renderEditor();
+}
+function renderPanel() {
+  const cell = cur();
+  edPanel.replaceChildren();
+  const title = document.createElement("div"); title.className = "ed-title";
+  title.textContent = `Cell · col ${sel.c + 1}, row ${sel.r + 1}`;
+  edPanel.append(title);
+
+  const kRow = document.createElement("div"); kRow.className = "ed-row";
+  const kLbl = document.createElement("div"); kLbl.className = "lbl"; kLbl.textContent = "Kind";
+  const seg = document.createElement("div"); seg.className = "seg";
+  for (const [k, label] of [["Q", "Quad"], ["T", "Triangle"]]) {
+    const b = document.createElement("button"); b.textContent = label;
+    if (cell.kind === k) b.classList.add("sel");
+    b.onclick = () => setKind(k); seg.append(b);
+  }
+  kRow.append(kLbl, seg); edPanel.append(kRow);
+
+  const sRow = document.createElement("div"); sRow.className = "ed-row";
+  const sLbl = document.createElement("div"); sLbl.className = "lbl"; sLbl.textContent = "Shape";
+  sRow.append(sLbl, cell.kind === "Q" ? quadEditor(cell) : triEditor(cell));
+  const note = document.createElement("span"); note.className = "ed-note";
+  note.textContent = cell.kind === "Q" ? "click a quadrant to flip fg/bg" : "pick the fg corner";
+  sRow.append(note); edPanel.append(sRow);
+
+  edPanel.append(colourRow("Foreground", () => cell.fg, (v) => { cell.fg = v; }));
+  edPanel.append(colourRow("Background", () => cell.bg, (v) => { cell.bg = v; }));
+
+  const aRow = document.createElement("div"); aRow.className = "ed-row";
+  const aLbl = document.createElement("div"); aLbl.className = "lbl"; aLbl.textContent = "Accent";
+  const aseg = document.createElement("div"); aseg.className = "seg";
+  const cdir = cell.diag ? cell.diag.dir : "none";
+  for (const [val, glyph] of [["none", "off"], ["\\", "╲"], ["/", "╱"]]) {
+    const b = document.createElement("button"); b.textContent = glyph;
+    if (cdir === val) b.classList.add("sel");
+    b.onclick = () => {
+      if (val === "none") delete cell.diag;
+      else cell.diag = { dir: val, color: cell.diag ? cell.diag.color : (iconColours().find((c) => PACK(c) !== PACK(cell.bg)) || cell.fg).slice() };
+      renderEditor();
+    };
+    aseg.append(b);
+  }
+  aRow.append(aLbl, aseg); edPanel.append(aRow);
+  if (cell.diag) edPanel.append(colourRow("Accent colour", () => cell.diag.color, (v) => { cell.diag.color = v; }));
+}
+
+const edSvgOut = (size) => agenticonFromCells(editCells, { size });
+const flash = (btn, msg) => { const old = btn.textContent; btn.textContent = msg; setTimeout(() => (btn.textContent = old), 1100); };
+$("edLoad").onclick = () => loadEditor(seedEl.value);
+$("edResetSeed").onclick = () => loadEditor(seedEl.value);
+$("edCopy").onclick = async () => {
+  try { await navigator.clipboard.writeText(edSvgOut(512)); flash($("edCopy"), "Copied!"); }
+  catch { flash($("edCopy"), "Copy failed"); }
+};
+$("edDownload").onclick = () => {
+  const blob = new Blob([edSvgOut(512)], { type: "image/svg+xml" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = (seedEl.value || "icon").replace(/[^\w.-]+/g, "_") + "-edited.svg";
+  a.click(); URL.revokeObjectURL(a.href);
+};
+
+loadEditor(seedEl.value);
 </script>
 </body>
 </html>

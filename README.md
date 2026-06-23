@@ -3,6 +3,11 @@
 Deterministic geometric identicons. One generator, two views: crisp **SVG** for the web
 and **ANSI block-glyph** art for the terminal.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/flux627/agenticon/main/assets/demo.png" width="694"
+       alt="agenticon gallery — a dozen colourful identicons, plus one icon shown in colour, greyscale and 1-bit">
+</p>
+
 Each icon is a 4×2 grid of cells (solids, halves, corner blocks, diagonals, corner
 triangles) grown so adjacent cells share colour across their seams. Tiles are chosen so
 no quarter-square is ever left orphaned, giving a continuous, legible flow. An optional

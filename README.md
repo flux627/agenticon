@@ -1,5 +1,7 @@
 # agenticon
 
+**[▶ Try the live playground →](https://flux627.github.io/agenticon/)**
+
 Deterministic geometric identicons. One generator, two views: crisp **SVG** for the web
 and **ANSI block-glyph** art for the terminal.
 

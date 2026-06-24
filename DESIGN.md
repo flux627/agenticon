@@ -179,14 +179,26 @@ All in `src/generate.js` unless noted:
 | `DIAG_PROB` | 0.5 | chance a solid tile gets a diagonal accent (0 = off) |
 | `DIAG_STROKE` | 0.05 | accent band width (SVG), as a fraction of the cell's shorter side (`render.js`) |
 | recolour `N_WEIGHTS` | (`recolor.js`) | distribution of palette size (1–5 colours) |
+| `REPAIR_DE` | 0.15 | min OKLab dE between two adjacent recoloured colours (`recolor.js`; 0 = off) |
 
 ## Recolour
 
 Independent pass (`buildRecolorMap`, seeded `"recolor|"+text`): hue-sort the
 unique colours, split into N (1–5) bold OKLCH groups, shift hue+saturation 70%
-toward the group colour, **brightness locked** (keeps light/dark structure, so
-every shape stays legible). It's a per-colour remap, so it preserves region
-topology — recoloured and raw icons have identical shapes.
+toward the group colour, **brightness kept** (it carries the icon's light/dark
+structure). It's a per-colour remap, so it preserves region topology — recoloured
+and raw icons have identical shapes.
+
+Brightness-keeping has a failure mode: two colours that collapse into the same bold
+group are then left separated only by their original brightness, and a near-match
+there makes adjacent regions read as one. A final `separate` pass closes this — it
+walks the colours that actually **touch** (share a tile edge) and, for any pair below
+`REPAIR_DE` in OKLab, opens a lightness gap until they clear it (relaxed to a fixpoint
+so a colour shared by several tight pairs settles between them). Only lightness moves,
+clamped to a bold band so nothing is driven to white or black; hue/chroma stay put, so
+the grouped palette is intact. Still a per-colour remap — topology is preserved. Over
+10k icons this holds ~97% of icons at/above the gate; the shallow remainder is
+gamut-limited (colours with no lightness room left), tracked by `npm run analyze`.
 
 ## Monochrome (`gray`, `bw`)
 

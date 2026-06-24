@@ -18,7 +18,9 @@ no build step**. (There is no Python — it was removed; JS is the single source
    from `makeRng(text)`; never introduce `Date`/`Math.random` (they'd break determinism).
 
 Verify with `npm run analyze` — it reports the tile/area distribution and checks #1 and #3
-over 10k icons (expect `orphaned 1/4 squares: 0` and `largest region ≤ 2.5`). Eyeball with
+over 10k icons (expect `orphaned 1/4 squares: 0` and `largest region ≤ 2.5`). It also reports
+recolour separation (min OKLab dE between adjacent colours; the `separate` pass should keep
+nearly all icons at/above `REPAIR_DE`, leaving only a shallow gamut-limited tail). Eyeball with
 `node bin/agenticon.js --gallery` or `node bin/agenticon.js --svg <text>`.
 
 ## Gotchas
@@ -39,7 +41,8 @@ over 10k icons (expect `orphaned 1/4 squares: 0` and `largest region ≤ 2.5`). 
 `AREA_LIMIT` (region cap) · `FORCE_DIAG_TURN` (which turn forces a diagonal) ·
 `MIN_CONTRAST` (in `palette.js`; two-colour tile contrast floor) · `KIND_W` (Q-vs-T mix) ·
 `DIAG_PROB` (solid-tile diagonal-accent rate; 0 = off) · `DIAG_STROKE` (accent line width, in
-`render.js`). Changing any of these is an aesthetic call — re-run `npm run analyze` and re-render to check.
+`render.js`) · `REPAIR_DE` (in `recolor.js`; min OKLab dE between adjacent recoloured colours, 0 =
+off). Changing any of these is an aesthetic call — re-run `npm run analyze` and re-render to check.
 
 ## Conventions
 - Match the existing terse, comment-light-but-pointed style in `src/`.

@@ -8,7 +8,7 @@
 //
 //   node scripts/analyze.mjs [N]        (or: npm run analyze)
 
-import { generate, GW, GH } from "../src/index.js";
+import { generate, GW, GH, buildRecolorMap } from "../src/index.js";
 
 const N = parseInt(process.argv[2], 10) || 10000;
 const ckey = (c) => (c[0] << 16) | (c[1] << 8) | c[2];
@@ -22,6 +22,31 @@ const DIR = { N: [0, -1], S: [0, 1], W: [-1, 0], E: [1, 0] };
 const edgeColors = (cell, e) => cell.kind === "Q"
   ? EDGES[e].map((i) => (cell.data[i] ? cell.fg : cell.bg))
   : (TRI_LEGS[cell.data].includes(e) ? [cell.fg, cell.fg] : [cell.bg, cell.bg]);
+
+// recolour separation check: smallest OKLab dE between any two ADJACENT recoloured
+// colours in an icon (the `separate` pass should hold this at/above the 0.15 gate).
+const s2l = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+const rgb2oklab = ([r, g, b]) => {
+  const R = s2l(r), G = s2l(g), B = s2l(b);
+  const l = Math.cbrt(0.4122214708*R + 0.5363325363*G + 0.0514459929*B), m = Math.cbrt(0.2119034982*R + 0.6806995451*G + 0.1073969566*B), s = Math.cbrt(0.0883024619*R + 0.2817188376*G + 0.6299787005*B);
+  return [0.2104542553*l + 0.7936177850*m - 0.0040720468*s, 1.9779984951*l - 2.4285922050*m + 0.4505937099*s, 0.0259040371*l + 0.7827717662*m - 0.8086757660*s];
+};
+const oklabDE = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+const REPAIR_DE = 0.15;
+function minAdjacentDE(cells, cmap) {
+  const lab = (col) => rgb2oklab(cmap.get(ckey(col)) || col);
+  const seen = new Set(); let m = Infinity;
+  const pair = (a, b) => { const ka = ckey(a), kb = ckey(b); if (ka === kb) return; const key = ka < kb ? ka + "," + kb : kb + "," + ka; if (seen.has(key)) return; seen.add(key); m = Math.min(m, oklabDE(lab(a), lab(b))); };
+  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) {
+    const cell = cells[r][c];
+    if (cell.kind === "Q") { const sc = [0, 1, 2, 3].map((i) => cell.data[i] ? cell.fg : cell.bg); for (const [a, d] of [[0, 1], [0, 2], [1, 3], [2, 3]]) pair(sc[a], sc[d]); }
+    else pair(cell.fg, cell.bg);
+    if (cell.diag) { pair(cell.diag.color, cell.fg); pair(cell.diag.color, cell.bg); }
+    if (c + 1 < GW) { const a = edgeColors(cell, "E"), b = edgeColors(cells[r][c + 1], "W"); pair(a[0], b[0]); pair(a[1], b[1]); }
+    if (r + 1 < GH) { const a = edgeColors(cell, "S"), b = edgeColors(cells[r + 1][c], "N"); pair(a[0], b[0]); pair(a[1], b[1]); }
+  }
+  return m;
+}
 
 function category(cell) {
   if (cell.kind === "T") return "triangle";
@@ -84,6 +109,7 @@ const ORDER = ["triangle", "single-corner", "solid", "half", "diagonal", "three-
 const tile = Object.fromEntries(ORDER.map((k) => [k, 0]));
 const MAXR = 12, rank = new Float64Array(MAXR);
 let cells_n = 0, regions = 0, orphans = 0, maxRegion = 0;
+const des = [];                                       // per-icon min adjacent recoloured dE
 const t0 = Date.now();
 for (let i = 0; i < N; i++) {
   const cells = generate(String(i));
@@ -92,6 +118,8 @@ for (let i = 0; i < N; i++) {
   const s = regionAreas(cells); regions += s.length;
   if (s[0] > maxRegion) maxRegion = s[0];
   for (let k = 0; k < s.length && k < MAXR; k++) rank[k] += s[k];
+  const md = minAdjacentDE(cells, buildRecolorMap(String(i), cells));
+  if (isFinite(md)) des.push(md);
 }
 
 console.log(`agenticon — analysis over ${N} icons (${cells_n} cells), ${((Date.now() - t0) / 1000).toFixed(1)}s\n`);
@@ -104,3 +132,10 @@ console.log(`\n  mean regions/icon: ${(regions / N).toFixed(2)}`);
 console.log("\nInvariants:");
 console.log(`  orphaned 1/4 squares: ${orphans}   ${orphans === 0 ? "OK" : "*** VIOLATION ***"}`);
 console.log(`  largest region: ${maxRegion.toFixed(3)} tiles`);
+
+des.sort((a, b) => a - b);
+const q = (p) => des[Math.min(des.length - 1, Math.floor(p / 100 * des.length))];
+const below = des.filter((d) => d < REPAIR_DE - 1e-3).length;
+console.log(`\nRecolour separation (min OKLab dE between adjacent colours; gate ${REPAIR_DE}):`);
+console.log(`  min ${des[0].toFixed(3)}   p1 ${q(1).toFixed(3)}   p5 ${q(5).toFixed(3)}   median ${q(50).toFixed(3)}`);
+console.log(`  icons below gate: ${below} (${(below / des.length * 100).toFixed(2)}%)   ${below === 0 ? "OK" : "gamut-limited tail"}`);

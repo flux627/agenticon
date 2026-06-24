@@ -2,9 +2,12 @@
 //
 // Unique chromatic colours are hue-sorted at a random phase, split into N (1-5)
 // contiguous groups, and each is shifted 70% toward its group's bold OKLCH colour in
-// hue + saturation -- brightness left untouched so the icon's light/dark structure, and
-// thus every shape's legibility, is preserved. Achromatic colours go to the nearest
-// bold colour by brightness. Seeded independently of generation ("recolor|" + text).
+// hue + saturation -- brightness mostly drives the icon's light/dark structure, so it's
+// kept. Achromatic colours go to the nearest bold colour by brightness. A final pass
+// (`separate`) then pushes any two ADJACENT recoloured colours at least REPAIR_DE apart in
+// OKLab, opening the gap along lightness within a bold band -- so neighbouring regions
+// never collapse into the same colour, and nothing washes out to white or black. Seeded
+// independently of generation ("recolor|" + text).
 
 import { makeRng } from "./rng.js";
 import { ckey } from "./palette.js";
@@ -24,6 +27,16 @@ function oklch(L, C, Hdeg) {
   while (c > 0 && !inGamut(L, c*Math.cos(h), c*Math.sin(h))) c -= 0.004;
   const [R, G, B] = oklab2lrgb(L, c*Math.cos(h), c*Math.sin(h));
   return [Math.round(255*gam(R)), Math.round(255*gam(G)), Math.round(255*gam(B))];
+}
+const srgb2lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+function rgb2oklab([r, g, b]) {                                  // forward of oklab2lrgb, for dE
+  const R = srgb2lin(r), G = srgb2lin(g), B = srgb2lin(b);
+  const l = Math.cbrt(0.4122214708*R + 0.5363325363*G + 0.0514459929*B);
+  const m = Math.cbrt(0.2119034982*R + 0.6806995451*G + 0.1073969566*B);
+  const s = Math.cbrt(0.0883024619*R + 0.2817188376*G + 0.6299787005*B);
+  return [0.2104542553*l + 0.7936177850*m - 0.0040720468*s,
+          1.9779984951*l - 2.4285922050*m + 0.4505937099*s,
+          0.0259040371*l + 0.7827717662*m - 0.8086757660*s];
 }
 function boldPalette(N, H0) {
   if (N === 1) return [oklch(0.58, 0.34, H0)];
@@ -56,6 +69,61 @@ function blend(orig, neu, tHs = 0.7, tV = 0.0) {
 const N_WEIGHTS = [[1, 0.12], [2, 0.28], [3, 0.30], [4, 0.20], [5, 0.10]];
 function pickN(rng) { let x = rng(), acc = 0; for (const [n, w] of N_WEIGHTS) { acc += w; if (x < acc) return n; } return 3; }
 
+// --- final separation: keep adjacent recoloured colours perceptually apart ---
+// REPAIR_DE: min OKLab distance two touching colours must clear (0 = off). REPAIR_AIM aims
+// a hair higher to absorb 8-bit + gamut rounding. The gap is opened along lightness, clamped
+// to [L_LO,L_HI] so a pushed colour never reaches white or black.
+const REPAIR_DE = 0.15, REPAIR_AIM = REPAIR_DE + 0.005, L_LO = 0.18, L_HI = 0.90;
+const Q_ADJ = [[0, 1], [0, 2], [1, 3], [2, 3]];                 // touching sub-squares within a Q cell
+const E_IDX = { N: [0, 1], S: [2, 3], W: [0, 2], E: [1, 3] };
+const T_LEGS = { UL: ["N", "W"], UR: ["N", "E"], LL: ["S", "W"], LR: ["S", "E"] };
+const edgeOf = (cell, e) => cell.kind === "Q"                   // the two colours along edge e
+  ? E_IDX[e].map((i) => cell.data[i] ? cell.fg : cell.bg)
+  : (T_LEGS[cell.data].includes(e) ? [cell.fg, cell.fg] : [cell.bg, cell.bg]);
+
+// Unordered [keyA,keyB] pairs of colours that share an edge anywhere in the icon.
+function adjacentKeys(cells) {
+  const pairs = new Set();
+  const add = (a, b) => { const ka = ckey(a), kb = ckey(b); if (ka !== kb) pairs.add(ka < kb ? ka + "," + kb : kb + "," + ka); };
+  for (let r = 0; r < cells.length; r++) for (let c = 0; c < cells[r].length; c++) {
+    const cell = cells[r][c];
+    if (cell.kind === "Q") { const s = [0, 1, 2, 3].map((i) => cell.data[i] ? cell.fg : cell.bg); for (const [a, d] of Q_ADJ) add(s[a], s[d]); }
+    else add(cell.fg, cell.bg);
+    if (cell.diag) { add(cell.diag.color, cell.fg); add(cell.diag.color, cell.bg); }
+    const right = cells[r][c + 1]; if (right) { const a = edgeOf(cell, "E"), b = edgeOf(right, "W"); add(a[0], b[0]); add(a[1], b[1]); }
+    const down = cells[r + 1] && cells[r + 1][c]; if (down) { const a = edgeOf(cell, "S"), b = edgeOf(down, "N"); add(a[0], b[0]); add(a[1], b[1]); }
+  }
+  return [...pairs].map((s) => s.split(",").map(Number)).sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+}
+
+// Push every sub-REPAIR_DE adjacent pair apart along lightness, in place on `cmap`.
+// Relaxation over the pairs to a fixpoint; a colour in several tight pairs settles between
+// them. Only lightness moves (hue/chroma stay bold); the band clamp keeps it off the rails.
+function separate(cmap, cells) {
+  if (REPAIR_DE <= 0) return;
+  const pairs = adjacentKeys(cells).filter(([a, b]) => cmap.has(a) && cmap.has(b));
+  if (!pairs.length) return;
+  const lab = new Map([...cmap].map(([k, rgb]) => [k, rgb2oklab(rgb)]));   // [L,a,b]; only L moves
+  for (let it = 0; it < 200; it++) {
+    let moved = false;
+    for (const [ka, kb] of pairs) {
+      const A = lab.get(ka), B = lab.get(kb);
+      const dab = Math.hypot(A[1] - B[1], A[2] - B[2]);
+      if (dab >= REPAIR_AIM) continue;                          // already far enough off the L axis
+      const gap = Math.sqrt(REPAIR_AIM * REPAIR_AIM - dab * dab);
+      const hi = A[0] >= B[0] ? A : B, lo = A[0] >= B[0] ? B : A;
+      if (hi[0] - lo[0] >= gap - 1e-6) continue;
+      const mid = (hi[0] + lo[0]) / 2; let h = mid + gap / 2, l = mid - gap / 2;
+      if (h > L_HI) { l -= h - L_HI; h = L_HI; }                // clamp to the bold band,
+      if (l < L_LO) { h += L_LO - l; l = L_LO; }                // spilling the remainder onto the partner
+      if (h > L_HI) h = L_HI;
+      if (Math.abs(h - hi[0]) > 1e-7 || Math.abs(l - lo[0]) > 1e-7) { hi[0] = h; lo[0] = l; moved = true; }
+    }
+    if (!moved) break;
+  }
+  for (const [k, [L, a, b]] of lab) cmap.set(k, oklch(L, Math.hypot(a, b), Math.atan2(b, a) * 180 / Math.PI));
+}
+
 /** Map from each original colour (ckey) to its recoloured rgb, for `cells` of `text`. */
 export function buildRecolorMap(text, cells) {
   const uniq = [], seen = new Set();
@@ -77,6 +145,7 @@ export function buildRecolorMap(text, cells) {
     for (const nc of neu) { const dd = Math.abs(rgb2hsv(nc)[2] - v); if (dd < bd) { bd = dd; best = nc; } }
     cmap.set(ckey(c), blend(c, best));
   }
+  separate(cmap, cells);                                         // pull touching colours apart in L
   return cmap;
 }
 

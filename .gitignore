@@ -1,1 +1,12 @@
+# dependencies (this project has none, but keep the tooling honest)
 node_modules/
+
+# macOS cruft
+.DS_Store
+
+# Claude Code local state — settings, locks, and nested worktrees
+.claude/
+
+# throwaway analysis renders dumped at the repo root by scripts/*.mjs
+# (the real, referenced images live in assets/)
+/*.png
